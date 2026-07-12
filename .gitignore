@@ -1,0 +1,12 @@
+.build/
+dist/
+.DS_Store
+*.chls
+*.chlsz
+*.trace
+*.har
+*.xml
+*.m3u8
+*.plist
+.player-config.json
+*.log
