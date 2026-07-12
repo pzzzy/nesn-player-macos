@@ -9,9 +9,6 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
     var window: NSWindow!
     var player: AVPlayer!
     var config: Config
-    var commercialTask: Task<Void, Never>?
-    var commercialMuted = false
-    var muteStateBeforeCommercial = false
     let session = URLSession(configuration: .default)
     init(config: Config) { self.config = config }
 
@@ -70,9 +67,6 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
         window.center(); window.makeKeyAndOrderFront(nil)
         player.play()
         Task { await inspectMaster(url: asset.url) }
-        if UserDefaults.standard.bool(forKey: "CommercialAutoMute") {
-            startCommercialDetection(masterURL: asset.url)
-        }
     }
 
     func presentPlaybackError(_ error: Error) {
@@ -82,28 +76,6 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
         alert.runModal()
     }
 
-    func startCommercialDetection(masterURL: URL) {
-        commercialTask?.cancel()
-        let detector = CommercialDetector(masterURL: masterURL, session: session)
-        commercialTask = Task {
-            while !Task.isCancelled {
-                do {
-                    let state = try await detector.poll()
-                    if state.isCommercial != commercialMuted {
-                        commercialMuted = state.isCommercial
-                        if state.isCommercial {
-                            muteStateBeforeCommercial = player.isMuted
-                            player.isMuted = true
-                        } else {
-                            player.isMuted = muteStateBeforeCommercial
-                        }
-                        fputs(state.isCommercial ? "Commercial detected: muted\n" : "Program resumed: unmuted\n", stderr)
-                    }
-                } catch { fputs("Commercial detection warning: \(error)\n", stderr) }
-                try? await Task.sleep(for: .seconds(2))
-            }
-        }
-    }
 
     func inspectMaster(url: URL) async {
         do {

@@ -2,7 +2,7 @@
 
 An independent native macOS player for **current NESN subscribers** who have installed and signed into the official NESN 360 iPad app on Apple-silicon Mac hardware.
 
-It uses Apple's AVFoundation/FairPlay playback path, offers proper resizable windows and macOS fullscreen, selects the highest HLS rendition available, recognizes 4K/HEVC/HDR masters, and can mute SCTE-35-marked commercial avails.
+It uses Apple's AVFoundation/FairPlay playback path, offers proper resizable windows and macOS fullscreen, selects the highest HLS rendition available, recognizes 4K/HEVC/HDR masters.
 
 ## Requirements
 
@@ -18,39 +18,6 @@ It uses Apple's AVFoundation/FairPlay playback path, offers proper resizable win
 4. Resize freely or use the green button / Control-Command-F.
 
 The app reads the official app's local authorization session, queries NESN's live/upcoming schedule, and requests a fresh playback entitlement for the selected event. It does not ask for, store, or transmit your password to any third party.
-
-## Commercial auto-mute
-
-Optional and disabled by default. Enable it with:
-
-```sh
-defaults write io.github.pzzzy.nesn-player CommercialAutoMute -bool true
-```
-
-Compatible playlists observed in NESN feeds use:
-
-- `#EXT-X-SCTE35:TYPE=0x36` during an active commercial avail
-- `#EXT-X-SCTE35:TYPE=0x37` when program content resumes
-
-The player polls the highest video media playlist and toggles `AVPlayer.isMuted`. This is best-effort: feeds without these tags, unusual local breaks, or future upstream changes may not be detected. It does not remove, skip, record, or modify advertising.
-
-## 4K/HDR
-
-The player imposes no bitrate or resolution ceiling. AVFoundation can select 3840x2160 HEVC HLG/PQ variants when NESN advertises them and the Mac/display/HDCP path supports them. Availability is controlled by NESN and may vary by event.
-
-## Build
-
-```sh
-swift build -c release
-.build/release/NESNPlayer
-```
-
-For a distributable local app:
-
-```sh
-./scripts/build-app.sh
-open dist/NESN\ Player.app
-```
 
 ## Privacy and security
 
