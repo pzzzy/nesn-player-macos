@@ -9,16 +9,15 @@ It uses Apple's AVFoundation/FairPlay playback path, offers proper resizable win
 - Apple-silicon Mac running macOS 14 or later
 - Official NESN 360 app installed and signed in
 - Active NESN/TV-provider entitlement
-- Desired live event opened once in NESN 360 so its content ID is locally discoverable
 
 ## Use
 
-1. Install and sign into the official NESN 360 app.
-2. Start the desired live event once, then pause/quit it.
-3. Open **NESN Player**.
+1. Install and sign into the official NESN 360 app. You do not need to start a game there.
+2. Open **NESN Player**.
+3. The player queries NESN's current schedule. If one primary event is live it opens automatically; if multiple live events are available it asks which one to play.
 4. Resize freely or use the green button / Control-Command-F.
 
-The app reads the official app's local authorization session and requests a fresh playback entitlement from NESN. It does not ask for, store, or transmit your password to any third party.
+The app reads the official app's local authorization session, queries NESN's live/upcoming schedule, and requests a fresh playback entitlement for the selected event. It does not ask for, store, or transmit your password to any third party.
 
 ## Commercial auto-mute
 

@@ -1,6 +1,7 @@
 import AppKit
 import AVKit
 import AVFoundation
+import ObjectiveC
 
 struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl, licenseToken: String }
 
@@ -155,17 +156,33 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
 }
 
 do {
-    let session = try OfficialSession.discover()
-    let contentID = try session.latestContentID()
-    let config = Config(contentID: contentID, title: "NESN Player", url: "", certificateUrl: "", licenseUrl: "", licenseToken: "")
     let app = NSApplication.shared
     app.setActivationPolicy(.regular)
-    let delegate = AppDelegate(config: config)
-    app.delegate = delegate
+    let officialSession = try OfficialSession.discover()
+    let token = try officialSession.authorizationToken()
+    Task { @MainActor in
+        do {
+            let events = try await ScheduleClient.fetch(authorization: token)
+            guard let event = chooseEvent(events), let contentID = event.streamID else {
+                throw NSError(domain: "NESNSchedule", code: 404, userInfo: [NSLocalizedDescriptionKey: "No live or upcoming playable NESN events were found."])
+            }
+            let config = Config(contentID: contentID, title: event.title, url: "", certificateUrl: "", licenseUrl: "", licenseToken: "")
+            let delegate = AppDelegate(config: config)
+            app.delegate = delegate
+            // Keep the delegate alive for the process lifetime.
+            objc_setAssociatedObject(app, "NESNPlayerDelegate", delegate, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "NESN Player could not find an event"
+            alert.informativeText = error.localizedDescription + "\n\nOpen NESN 360 and confirm you are signed in, then try again."
+            alert.runModal()
+        }
+    }
     app.run()
 } catch {
     let alert = NSAlert()
     alert.messageText = "NESN Player setup needed"
-    alert.informativeText = "Install and sign into the official NESN 360 app, then open it once to refresh the live schedule.\n\n\(error.localizedDescription)"
+    alert.informativeText = "Install and sign into the official NESN 360 app. You do not need to open a game there.\n\n\(error.localizedDescription)"
     alert.runModal()
 }
