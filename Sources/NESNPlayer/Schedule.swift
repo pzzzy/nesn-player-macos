@@ -63,11 +63,21 @@ enum ScheduleClient {
     guard events.count > 1 else { return events.first }
     let live = events.filter { $0.currentState?.lowercased() == "live" }
     if live.count == 1 { return live[0] }
-    // Prefer the primary Boston Red Sox telecast over simultaneous minor-league
-    // or alternate events; otherwise let the subscriber choose.
+    // Prefer a dedicated 4K/UHD home-game feed when NESN publishes one. These
+    // are separate schedule events, not higher variants of the ordinary feed,
+    // so merely leaving AVPlayer uncapped is insufficient.
+    let ultraHD = live.filter {
+        $0.title.localizedCaseInsensitiveContains("4K") ||
+        $0.title.localizedCaseInsensitiveContains("UHD")
+    }
+    if ultraHD.count == 1 { return ultraHD[0] }
+
+    // Otherwise prefer the primary Boston Red Sox telecast over simultaneous
+    // minor-league, multiview, or alternate events.
     let primaryRedSox = live.filter {
-        $0.title.localizedCaseInsensitiveContains("Boston Red Sox") &&
-        !$0.title.localizedCaseInsensitiveContains("Worcester")
+        $0.title.localizedCaseInsensitiveContains("Red Sox") &&
+        !$0.title.localizedCaseInsensitiveContains("Worcester") &&
+        !$0.title.localizedCaseInsensitiveContains("Multiview")
     }
     if primaryRedSox.count == 1 { return primaryRedSox[0] }
     let candidates = live.isEmpty ? events : live

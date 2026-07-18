@@ -10,7 +10,11 @@ struct FairPlayInfo: Decodable {
 struct Entitlement: Decodable {
     struct Video: Decodable {
         struct StreamingInfo: Decodable {
-            struct VideoAssets: Decodable { let fairPlay: FairPlayInfo }
+            struct VideoAssets: Decodable {
+                let fairPlay: FairPlayInfo?
+                let hls: String?
+                let is4K: Bool?
+            }
             let videoAssets: VideoAssets
         }
         let id: String
@@ -23,7 +27,9 @@ struct Entitlement: Decodable {
 
     var contentID: String { video.id }
     var title: String { video.title }
-    var fairPlay: FairPlayInfo { video.streamingInfo.videoAssets.fairPlay }
+    var fairPlay: FairPlayInfo? { video.streamingInfo.videoAssets.fairPlay }
+    var hlsURL: String? { video.streamingInfo.videoAssets.hls }
+    var is4K: Bool { video.streamingInfo.videoAssets.is4K == true }
 
     static func parse(_ data: Data) throws -> Entitlement {
         let value = try JSONDecoder().decode(Entitlement.self, from: data)

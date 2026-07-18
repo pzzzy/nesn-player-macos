@@ -17,8 +17,15 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
             do {
                 let token = try OfficialSession.discover().authorizationToken()
                 let entitlement = try await EntitlementClient.fetch(contentID: config.contentID, authorization: token)
-                let fp = entitlement.fairPlay
-                config = Config(contentID: entitlement.contentID, title: entitlement.title, url: fp.url, certificateUrl: fp.certificateUrl, licenseUrl: fp.licenseUrl, licenseToken: fp.licenseToken)
+                if let fp = entitlement.fairPlay {
+                    config = Config(contentID: entitlement.contentID, title: entitlement.title, url: fp.url, certificateUrl: fp.certificateUrl, licenseUrl: fp.licenseUrl, licenseToken: fp.licenseToken)
+                } else if let hls = entitlement.hlsURL {
+                    // NESN's dedicated 4K feed is currently delivered as a direct
+                    // HLS asset rather than the FairPlay object used by HD feeds.
+                    config = Config(contentID: entitlement.contentID, title: entitlement.title, url: hls, certificateUrl: "", licenseUrl: "", licenseToken: "")
+                } else {
+                    throw NSError(domain: "NESNEntitlement", code: 404, userInfo: [NSLocalizedDescriptionKey: "NESN did not return a playable HLS asset."])
+                }
                 startPlayback()
             } catch {
                 presentPlaybackError(error)
