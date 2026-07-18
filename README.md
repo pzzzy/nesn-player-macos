@@ -2,7 +2,29 @@
 
 An independent native macOS player for **current NESN subscribers** who have installed and signed into the official NESN 360 iPad app on Apple-silicon Mac hardware.
 
-It uses Apple's AVFoundation/FairPlay playback path, offers proper resizable windows and macOS fullscreen, selects the highest HLS rendition available, recognizes 4K/HEVC/HDR masters.
+It uses Apple's native AVFoundation playback path, offers freely resizable windows and true macOS fullscreen, and leaves adaptive streaming uncapped so AVPlayer can select the highest sustainable rendition.
+
+## Video quality and dedicated 4K events
+
+NESN may publish a home-game 4K broadcast as a **separate schedule event**, rather than as a rendition inside the ordinary HD event. NESN Player therefore:
+
+1. Prefers a live event whose title identifies it as `4K` or `UHD`.
+2. Falls back to the primary Red Sox telecast when no dedicated UHD event exists.
+3. Supports both NESN delivery forms currently observed:
+   - FairPlay-protected HLS for ordinary feeds.
+   - Direct HLS returned by the entitlement API for dedicated 4K feeds.
+4. Sets no application-level bitrate or resolution ceiling (`preferredPeakBitRate = 0` and `preferredMaximumResolution = .zero`). Final adaptive selection still depends on NESN's master playlist, network conditions, display capabilities, and AVFoundation.
+
+When launched from Terminal, the player writes non-sensitive diagnostics to standard error. These report the master playlist's maximum resolution, frame rate, HDR/HEVC flags, audio-channel count and bandwidth, followed by AVPlayer's indicated and observed bitrates. Stream URLs, authorization tokens and DRM material are not logged.
+
+Example from a verified dedicated feed:
+
+```text
+Master capabilities: 3840x2160 @ 59.94fps, HDR=true, HEVC=true, audioChannels=6, bandwidth=16781600bps
+Stream quality: indicated=19421600bps observed=323829854bps
+```
+
+`indicated` is the bitrate AVPlayer reports for the selected rendition. `observed` is measured delivery throughput, not the encoded video bitrate.
 
 ## Requirements
 
@@ -14,10 +36,21 @@ It uses Apple's AVFoundation/FairPlay playback path, offers proper resizable win
 
 1. Install and sign into the official NESN 360 app. You do not need to start a game there.
 2. Open **NESN Player**.
-3. The player queries NESN's current schedule. If one primary event is live it opens automatically; if multiple live events are available it asks which one to play.
+3. The player queries NESN's current schedule. A dedicated 4K/UHD event is preferred automatically; otherwise the primary Red Sox event is selected when unambiguous. If several candidates remain, the app asks which one to play.
 4. Resize freely or use the green button / Control-Command-F.
 
 The app reads the official app's local authorization session, queries NESN's live/upcoming schedule, and requests a fresh playback entitlement for the selected event. It does not ask for, store, or transmit your password to any third party.
+
+## Build from source
+
+```sh
+git clone https://github.com/pzzzy/nesn-player-macos.git
+cd nesn-player-macos
+./scripts/build-app.sh
+open "dist/NESN Player.app"
+```
+
+The build script requires Xcode command-line tools and creates an ad-hoc-signed application plus a versioned ZIP and SHA-256 file under `dist/`.
 
 ## Privacy and security
 
