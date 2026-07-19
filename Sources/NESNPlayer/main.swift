@@ -55,18 +55,10 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
         }
         player = AVPlayer(playerItem: item)
         let initialFrame = NSRect(x: 0, y: 0, width: 1280, height: 720)
-        let container = NSView(frame: initialFrame)
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.black.cgColor
-        let view = AVPlayerView(frame: container.bounds)
-        view.player = player
-        view.controlsStyle = .floating
-        view.videoGravity = .resizeAspect
-        view.autoresizingMask = [.width, .height]
-        container.addSubview(view)
+        let playbackView = PlaybackView(frame: initialFrame, player: player)
         window = NSWindow(contentRect: initialFrame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = config.title
-        window.contentView = container
+        window.contentView = playbackView
         window.styleMask.insert(.resizable)
         window.contentMinSize = NSSize(width: 320, height: 180)
         window.resizeIncrements = NSSize(width: 1, height: 1)

@@ -2,6 +2,21 @@
 
 All notable user-facing changes are documented here.
 
+## 1.3.0 — 2026-07-19
+
+### Changed
+
+- Replaced AVPlayerView's overlapping native transport overlay with a compact custom control bar.
+- Removed mouse scrubbing to prevent accidental live-stream timeline jumps.
+- Vertical scrolling over the player now controls volume.
+
+### Added
+
+- A dedicated 30-second replay control constrained to the current seekable HLS window.
+- A clickable LIVE/GO LIVE control that returns playback to the live edge.
+- Green live-edge and red replay-state indicators.
+- Automated playback-model regression tests for live-state thresholds, volume bounds, replay bounds and live-edge calculations.
+
 ## 1.2.0 — 2026-07-17
 
 ### Added

@@ -39,6 +39,15 @@ Stream quality: indicated=19421600bps observed=323829854bps
 3. The player queries NESN's current schedule. A dedicated 4K/UHD event is preferred automatically; otherwise the primary Red Sox event is selected when unambiguous. If several candidates remain, the app asks which one to play.
 4. Resize freely or use the green button / Control-Command-F.
 
+## Playback controls
+
+- Move the pointer over the video to reveal the compact control bar.
+- Scroll vertically over the player to adjust volume. Wheel events are consumed by the player and never scrub the timeline.
+- **Replay 30 seconds** jumps backward within the provider's current seekable live window. NESN's live HLS window supplies the replay buffer; no video is recorded or saved by this app.
+- **GO LIVE** returns immediately to the current seekable live edge.
+- The status light is green with **LIVE** when playback is within three seconds of the live edge. It changes to red and the button reads **GO LIVE** while viewing a replay.
+- Mouse scrubbing is intentionally unavailable. This prevents accidental timeline jumps and keeps replay navigation limited to explicit controls.
+
 The app reads the official app's local authorization session, queries NESN's live/upcoming schedule, and requests a fresh playback entitlement for the selected event. It does not ask for, store, or transmit your password to any third party.
 
 ## Build from source
