@@ -16,17 +16,26 @@ enum WatchCatalogClient {
     """
 
     static func fetch(authorization: String) async throws -> [WatchItem] {
-        async let home = fetchPage(query: homeQuery, path: "/", authorization: authorization)
-        async let linear = fetchPage(query: linearQuery, path: "/live", authorization: authorization)
-        let (homeObject, linearObject) = try await (home, linear)
+        async let home = fetchPageResult(query: homeQuery, path: "/", authorization: authorization)
+        async let linear = fetchPageResult(query: linearQuery, path: "/live", authorization: authorization)
+        let (homeResult, linearResult) = await (home, linear)
         var items: [WatchItem] = []
-        collectHome(homeObject, into: &items)
-        collectLinear(linearObject, into: &items)
+        if case let .success(homeObject) = homeResult { collectHome(homeObject, into: &items) }
+        if case let .success(linearObject) = linearResult { collectLinear(linearObject, into: &items) }
+        if items.isEmpty {
+            if case let .failure(error) = homeResult { throw error }
+            if case let .failure(error) = linearResult { throw error }
+        }
         let ordered = chooserChoices(from: items.map(\.choice))
         let byID = items.reduce(into: [String: WatchItem]()) { result, item in
             if result[item.choice.id] == nil { result[item.choice.id] = item }
         }
         return ordered.compactMap { byID[$0.id] }
+    }
+
+    private static func fetchPageResult(query: String, path: String, authorization: String) async -> Result<Any, Error> {
+        do { return .success(try await fetchPage(query: query, path: path, authorization: authorization)) }
+        catch { return .failure(error) }
     }
 
     private static func fetchPage(query: String, path: String, authorization: String) async throws -> Any {
@@ -58,10 +67,17 @@ enum WatchCatalogClient {
             for row in rows {
                 let type = row["__typename"] as? String
                 if type == "Game", (row["currentState"] as? String)?.lowercased() == "live",
-                   let streams = row["livestreams"] as? [[String: Any]], let stream = streams.first,
-                   let id = stream["id"] as? String, let title = row["title"] as? String {
-                    let choice = WatchChoice(id: id, title: title, kind: .liveEvent, isLive: true)
-                    items.append(WatchItem(choice: choice, contentID: id, channelID: nil))
+                   let streams = row["livestreams"] as? [[String: Any]],
+                   let gameTitle = row["title"] as? String {
+                    let candidates = streams.compactMap { stream -> WatchStream? in
+                        guard let id = stream["id"] as? String else { return nil }
+                        return WatchStream(id: id, title: (stream["title"] as? String) ?? gameTitle)
+                    }
+                    guard let stream = preferredLiveStream(candidates) else { continue }
+                    let isUHD = stream.title.localizedCaseInsensitiveContains("4K") || stream.title.localizedCaseInsensitiveContains("UHD")
+                    let title = isUHD ? stream.title : gameTitle
+                    let choice = WatchChoice(id: stream.id, title: title, kind: .liveEvent, isLive: true)
+                    items.append(WatchItem(choice: choice, contentID: stream.id, channelID: nil))
                 } else if type == "Video", moduleTitle.localizedCaseInsensitiveContains("FULL GAME REPLAYS"),
                           let id = row["id"] as? String, let title = row["title"] as? String,
                           isFullGameReplay(title: title) {
