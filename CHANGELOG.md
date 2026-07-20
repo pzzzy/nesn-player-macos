@@ -2,6 +2,19 @@
 
 All notable user-facing changes are documented here.
 
+## 1.4.0 — 2026-07-19
+
+### Added
+
+- Launch chooser when no unambiguous live Red Sox game is available.
+- Playback of current non-baseball live events, the regular NESN linear channel, and recent Red Sox full-game replays.
+- Mouse-enabled scrub bar with elapsed and total time for on-demand replays only.
+
+### Changed
+
+- Live sources retain accidental-scrub protection, 30-second replay, and LIVE/GO LIVE controls.
+- Replay discovery is read from NESN's current full-game replay tray and preserves provider ordering with newest items first.
+
 ## 1.3.0 — 2026-07-19
 
 ### Changed

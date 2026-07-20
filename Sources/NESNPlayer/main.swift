@@ -3,29 +3,47 @@ import AVKit
 import AVFoundation
 import ObjectiveC
 
+final class LaunchDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+}
+
 struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl, licenseToken: String }
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, AVAssetResourceLoaderDelegate {
     var window: NSWindow!
     var player: AVPlayer!
     var config: Config
+    let channelID: String?
+    let launchWindow: NSWindow?
+    let isLiveContent: Bool
     let session = URLSession(configuration: .default)
-    init(config: Config) { self.config = config }
+    init(config: Config, channelID: String? = nil, launchWindow: NSWindow? = nil, isLiveContent: Bool = true) {
+        self.config = config
+        self.channelID = channelID
+        self.launchWindow = launchWindow
+        self.isLiveContent = isLiveContent
+    }
 
     func applicationDidFinishLaunching(_ note: Notification) {
         Task {
             do {
                 let token = try OfficialSession.discover().authorizationToken()
-                let entitlement = try await EntitlementClient.fetch(contentID: config.contentID, authorization: token)
+                let entitlement: Entitlement
+                if let channelID {
+                    entitlement = try await LinearEntitlementClient.fetch(linearID: config.contentID, channelID: channelID, authorization: token)
+                } else {
+                    entitlement = try await EntitlementClient.fetch(contentID: config.contentID, authorization: token)
+                }
                 if let fp = entitlement.fairPlay {
-                    config = Config(contentID: entitlement.contentID, title: entitlement.title, url: fp.url, certificateUrl: fp.certificateUrl, licenseUrl: fp.licenseUrl, licenseToken: fp.licenseToken)
+                    config = Config(contentID: entitlement.contentID, title: config.title, url: fp.url, certificateUrl: fp.certificateUrl, licenseUrl: fp.licenseUrl, licenseToken: fp.licenseToken)
                 } else if let hls = entitlement.hlsURL {
                     // NESN's dedicated 4K feed is currently delivered as a direct
                     // HLS asset rather than the FairPlay object used by HD feeds.
-                    config = Config(contentID: entitlement.contentID, title: entitlement.title, url: hls, certificateUrl: "", licenseUrl: "", licenseToken: "")
+                    config = Config(contentID: entitlement.contentID, title: config.title, url: hls, certificateUrl: "", licenseUrl: "", licenseToken: "")
                 } else {
                     throw NSError(domain: "NESNEntitlement", code: 404, userInfo: [NSLocalizedDescriptionKey: "NESN did not return a playable HLS asset."])
                 }
+                launchWindow?.close()
                 startPlayback()
             } catch {
                 presentPlaybackError(error)
@@ -55,7 +73,7 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
         }
         player = AVPlayer(playerItem: item)
         let initialFrame = NSRect(x: 0, y: 0, width: 1280, height: 720)
-        let playbackView = PlaybackView(frame: initialFrame, player: player)
+        let playbackView = PlaybackView(frame: initialFrame, player: player, isLiveContent: isLiveContent)
         window = NSWindow(contentRect: initialFrame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = config.title
         window.contentView = playbackView
@@ -129,25 +147,55 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
 do {
     let app = NSApplication.shared
     app.setActivationPolicy(.regular)
+    let launchDelegate = LaunchDelegate()
+    app.delegate = launchDelegate
+    objc_setAssociatedObject(app, "NESNPlayerLaunchDelegate", launchDelegate, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    let launchWindow = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 540, height: 180),
+        styleMask: [.titled, .closable], backing: .buffered, defer: false
+    )
+    launchWindow.title = "NESN Player"
+    launchWindow.center()
+    let launchLabel = NSTextField(labelWithString: "Loading NESN programming…")
+    launchLabel.alignment = .center
+    launchLabel.font = .systemFont(ofSize: 17, weight: .medium)
+    launchLabel.frame = NSRect(x: 30, y: 72, width: 480, height: 28)
+    launchWindow.contentView?.addSubview(launchLabel)
+    launchWindow.makeKeyAndOrderFront(nil)
+    app.activate(ignoringOtherApps: true)
+    ProcessInfo.processInfo.disableAutomaticTermination("Choosing NESN programming")
+    let launchActivity = ProcessInfo.processInfo.beginActivity(
+        options: [.automaticTerminationDisabled, .suddenTerminationDisabled, .userInitiated],
+        reason: "Loading NESN programming"
+    )
     let officialSession = try OfficialSession.discover()
     let token = try officialSession.authorizationToken()
     Task { @MainActor in
+        defer {
+            ProcessInfo.processInfo.enableAutomaticTermination("Choosing NESN programming")
+            ProcessInfo.processInfo.endActivity(launchActivity)
+        }
         do {
-            let events = try await ScheduleClient.fetch(authorization: token)
-            guard let event = chooseEvent(events), let contentID = event.streamID else {
-                throw NSError(domain: "NESNSchedule", code: 404, userInfo: [NSLocalizedDescriptionKey: "No live or upcoming playable NESN events were found."])
+            let items = try await WatchCatalogClient.fetch(authorization: token)
+            guard !items.isEmpty else {
+                throw NSError(domain: "NESNCatalog", code: 404, userInfo: [NSLocalizedDescriptionKey: "NESN returned no playable programs."])
             }
-            let config = Config(contentID: contentID, title: event.title, url: "", certificateUrl: "", licenseUrl: "", licenseToken: "")
-            let delegate = AppDelegate(config: config)
+            guard let item = chooseWatchItem(items) else {
+                app.terminate(nil)
+                return
+            }
+            let config = Config(contentID: item.contentID, title: item.choice.title, url: "", certificateUrl: "", licenseUrl: "", licenseToken: "")
+            let delegate = AppDelegate(config: config, channelID: item.channelID, launchWindow: launchWindow, isLiveContent: item.choice.isLive)
             app.delegate = delegate
             // Keep the delegate alive for the process lifetime.
             objc_setAssociatedObject(app, "NESNPlayerDelegate", delegate, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         } catch {
             let alert = NSAlert()
-            alert.messageText = "NESN Player could not find an event"
+            alert.messageText = "NESN Player could not load the watch catalog"
             alert.informativeText = error.localizedDescription + "\n\nOpen NESN 360 and confirm you are signed in, then try again."
             alert.runModal()
+            app.terminate(nil)
         }
     }
     app.run()

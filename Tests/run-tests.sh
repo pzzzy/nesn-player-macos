@@ -5,6 +5,7 @@ BUILD="$ROOT/.build/playback-model-tests"
 mkdir -p "$BUILD"
 xcrun swiftc \
   "$ROOT/Sources/NESNPlayer/PlaybackModel.swift" \
+  "$ROOT/Sources/NESNPlayer/WatchCatalogModel.swift" \
   "$ROOT/Tests/PlaybackModelTests/main.swift" \
   -o "$BUILD/PlaybackModelTests"
 "$BUILD/PlaybackModelTests"

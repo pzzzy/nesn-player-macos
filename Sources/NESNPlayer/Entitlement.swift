@@ -144,3 +144,41 @@ enum EntitlementClient {
         return try Entitlement.parse(data)
     }
 }
+
+enum LinearEntitlementClient {
+    static func fetch(linearID: String, channelID: String, authorization: String) async throws -> Entitlement {
+        var components = URLComponents(string: "https://nesn.api.viewlift.com/v3/entitlement/linearchannel")!
+        components.queryItems = [
+            .init(name: "id", value: linearID), .init(name: "deviceId", value: UUID().uuidString),
+            .init(name: "deviceType", value: "ios_ipad"), .init(name: "contentConsumption", value: "ios"),
+            .init(name: "channelId", value: channelID),
+        ]
+        var request = URLRequest(url: components.url!)
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        request.setValue("HDCP-2.2", forHTTPHeaderField: "hdcp")
+        request.setValue("L1", forHTTPHeaderField: "sl")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("NESN 360/8 CFNetwork/3860 Darwin/25", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw NSError(domain: "NESNLinearEntitlement", code: (response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard object?["playable"] as? Bool == true,
+              let linear = object?["linearchannel"] as? [String: Any],
+              let info = linear["streamingInfo"] as? [String: Any],
+              let assets = info["videoAssets"] as? [String: Any],
+              let fp = assets["fairPlay"] as? [String: Any],
+              let url = fp["url"] as? String, let certificate = fp["certificateUrl"] as? String,
+              let license = fp["licenseUrl"] as? String, let token = fp["licenseToken"] as? String,
+              let id = linear["id"] as? String, let title = linear["title"] as? String else {
+            throw NSError(domain: "NESNLinearEntitlement", code: 422)
+        }
+        let synthetic: [String: Any] = ["playable": true, "success": true, "video": [
+            "id": id, "title": title, "streamingInfo": ["videoAssets": ["fairPlay": [
+                "url": url, "certificateUrl": certificate, "licenseUrl": license, "licenseToken": token,
+            ]]],
+        ]]
+        return try Entitlement.parse(JSONSerialization.data(withJSONObject: synthetic))
+    }
+}

@@ -36,19 +36,22 @@ Stream quality: indicated=19421600bps observed=323829854bps
 
 1. Install and sign into the official NESN 360 app. You do not need to start a game there.
 2. Open **NESN Player**.
-3. The player queries NESN's current schedule. A dedicated 4K/UHD event is preferred automatically; otherwise the primary Red Sox event is selected when unambiguous. If several candidates remain, the app asks which one to play.
+3. The player queries NESN's current catalog. A dedicated live Red Sox 4K/UHD event is preferred automatically. When no unambiguous live Red Sox game is available, a launch chooser offers current live events, the regular NESN linear channel, and recent Red Sox full-game replays.
 4. Resize freely or use the green button / Control-Command-F.
 
 ## Playback controls
 
 - Move the pointer over the video to reveal the compact control bar.
-- Scroll vertically over the player to adjust volume. Wheel events are consumed by the player and never scrub the timeline.
-- **Replay 30 seconds** jumps backward within the provider's current seekable live window. NESN's live HLS window supplies the replay buffer; no video is recorded or saved by this app.
-- **GO LIVE** returns immediately to the current seekable live edge.
-- The status light is green with **LIVE** when playback is within three seconds of the live edge. It changes to red and the button reads **GO LIVE** while viewing a replay.
-- Mouse scrubbing is intentionally unavailable. This prevents accidental timeline jumps and keeps replay navigation limited to explicit controls.
+- Scroll vertically over the player to adjust volume.
+- For live sources, wheel events never scrub. **Replay 30 seconds** jumps backward within the provider's current seekable HLS window, while **GO LIVE** returns to the live edge. The status light is green at the live edge and red while delayed.
+- For on-demand full-game replays, a mouse-enabled scrub bar and elapsed/total duration display permit normal seeking. The live-edge indicator is omitted.
+- The player does not record or save video locally.
 
-The app reads the official app's local authorization session, queries NESN's live/upcoming schedule, and requests a fresh playback entitlement for the selected event. It does not ask for, store, or transmit your password to any third party.
+The app reads the official app's local authorization session, queries NESN's live and replay catalogs, and requests a fresh playback entitlement for the selected source. It does not ask for, store, or transmit your password to any third party.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build, test, security, privacy, and pull-request guidelines.
 
 ## Build from source
 

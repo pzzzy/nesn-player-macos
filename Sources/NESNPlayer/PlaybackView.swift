@@ -42,19 +42,23 @@ final class ScrollPlayerView: AVPlayerView {
 @MainActor
 final class PlaybackView: NSView {
     let player: AVPlayer
+    let isLiveContent: Bool
     private let videoView = ScrollPlayerView()
     private let controls = NSVisualEffectView()
     private let volumeLabel = NSTextField(labelWithString: "100%")
     private let liveLight = NSView()
     private let liveButton = ActionButton(title: "LIVE", handler: {})
     private let playButton = ActionButton(title: "Pause", symbolName: "pause.fill", handler: {})
+    private let scrubber = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private let timeLabel = NSTextField(labelWithString: "0:00 / 0:00")
     private var timeObserver: Any?
     private var trackingAreaRef: NSTrackingArea?
     private var hideWorkItem: DispatchWorkItem?
     private var scrollMonitor: Any?
 
-    init(frame: NSRect, player: AVPlayer) {
+    init(frame: NSRect, player: AVPlayer, isLiveContent: Bool) {
         self.player = player
+        self.isLiveContent = isLiveContent
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
@@ -119,11 +123,37 @@ final class PlaybackView: NSView {
         liveStack.spacing = 5
         liveStack.alignment = .centerY
 
-        let stack = NSStackView(views: [volumeIcon, volumeLabel, replayButton, playButton, liveStack])
+        let transportViews: [NSView] = isLiveContent
+            ? [volumeIcon, volumeLabel, replayButton, playButton, liveStack]
+            : [volumeIcon, volumeLabel, replayButton, playButton]
+        let transport = NSStackView(views: transportViews)
+        transport.orientation = .horizontal
+        transport.alignment = .centerY
+        transport.spacing = 18
+
+        var controlRows: [NSView] = [transport]
+        if !isLiveContent {
+            scrubber.isContinuous = true
+            scrubber.target = self
+            scrubber.action = #selector(scrubChanged(_:))
+            scrubber.toolTip = "Seek within this replay"
+            scrubber.setAccessibilityLabel("Replay position")
+            timeLabel.textColor = .white
+            timeLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+            timeLabel.alignment = .right
+            timeLabel.setContentHuggingPriority(.required, for: .horizontal)
+            let scrubRow = NSStackView(views: [scrubber, timeLabel])
+            scrubRow.orientation = .horizontal
+            scrubRow.spacing = 10
+            scrubRow.alignment = .centerY
+            scrubber.widthAnchor.constraint(greaterThanOrEqualToConstant: 420).isActive = true
+            controlRows.insert(scrubRow, at: 0)
+        }
+        let stack = NSStackView(views: controlRows)
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.spacing = 18
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
         controls.addSubview(stack)
 
@@ -213,11 +243,13 @@ final class PlaybackView: NSView {
             MainActor.assumeIsolated {
                 self?.updateLiveState()
                 self?.updatePlayButton()
+                self?.updateScrubber()
             }
         }
     }
 
     private func updateLiveState() {
+        guard isLiveContent else { return }
         let current = player.currentTime().seconds
         guard let range = player.currentItem?.seekableTimeRanges.last?.timeRangeValue else {
             liveLight.layer?.backgroundColor = NSColor.systemRed.cgColor
@@ -239,6 +271,32 @@ final class PlaybackView: NSView {
 
     private func updateVolumeLabel() {
         volumeLabel.stringValue = "\(Int((player.volume * 100).rounded()))%"
+    }
+
+    @objc private func scrubChanged(_ sender: NSSlider) {
+        guard !isLiveContent else { return }
+        let duration = player.currentItem?.duration.seconds ?? 0
+        let target = scrubTarget(fraction: sender.doubleValue, duration: duration)
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        timeLabel.stringValue = "\(formatTime(target)) / \(formatTime(duration))"
+        showControls()
+    }
+
+    private func updateScrubber() {
+        guard !isLiveContent else { return }
+        let duration = player.currentItem?.duration.seconds ?? 0
+        let current = player.currentTime().seconds
+        scrubber.doubleValue = scrubFraction(current: current, duration: duration)
+        timeLabel.stringValue = "\(formatTime(current)) / \(formatTime(duration))"
+    }
+
+    private func formatTime(_ value: Double) -> String {
+        guard value.isFinite, value >= 0 else { return "0:00" }
+        let total = Int(value.rounded(.down))
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        return hours > 0 ? String(format: "%d:%02d:%02d", hours, minutes, seconds) : String(format: "%d:%02d", minutes, seconds)
     }
 
     private func showControls() {

@@ -22,16 +22,16 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>NESN Player</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
-<key>CFBundleShortVersionString</key><string>1.3.0</string>
-<key>CFBundleVersion</key><string>4</string>
+<key>CFBundleShortVersionString</key><string>1.4.0</string>
+<key>CFBundleVersion</key><string>5</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
 codesign --force --deep --sign - "$APP"
 cd "$ROOT/dist"
-rm -f NESN-Player-v1.3.0-macOS.zip NESN-Player-v1.3.0-macOS.zip.sha256
-COPYFILE_DISABLE=1 /usr/bin/zip -qry "NESN-Player-v1.3.0-macOS.zip" "NESN Player.app" -x '*/.DS_Store'
-HASH=$(shasum -a 256 "NESN-Player-v1.3.0-macOS.zip" | cut -d' ' -f1)
-printf '%s  dist/%s\n' "$HASH" "NESN-Player-v1.3.0-macOS.zip" > "NESN-Player-v1.3.0-macOS.zip.sha256"
+rm -f NESN-Player-v1.4.0-macOS.zip NESN-Player-v1.4.0-macOS.zip.sha256
+COPYFILE_DISABLE=1 /usr/bin/zip -qry "NESN-Player-v1.4.0-macOS.zip" "NESN Player.app" -x '*/.DS_Store'
+HASH=$(shasum -a 256 "NESN-Player-v1.4.0-macOS.zip" | cut -d' ' -f1)
+printf '%s  dist/%s\n' "$HASH" "NESN-Player-v1.4.0-macOS.zip" > "NESN-Player-v1.4.0-macOS.zip.sha256"
 echo "$APP"
