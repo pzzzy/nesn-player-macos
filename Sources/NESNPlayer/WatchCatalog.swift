@@ -133,6 +133,10 @@ func chooseWatchItem(_ items: [WatchItem]) -> WatchItem? {
     alert.accessoryView = popup
     alert.addButton(withTitle: "Watch")
     alert.addButton(withTitle: "Cancel")
-    guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+    // Require an explicit click instead of letting Return accept the default.
+    alert.buttons[0].keyEquivalent = ""
+    NSApplication.shared.activate(ignoringOtherApps: true)
+    let response = alert.runModal()
+    guard response == .alertFirstButtonReturn else { return nil }
     return items.indices.contains(popup.indexOfSelectedItem) ? items[popup.indexOfSelectedItem] : nil
 }

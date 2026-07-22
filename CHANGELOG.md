@@ -2,6 +2,14 @@
 
 All notable user-facing changes are documented here.
 
+## 1.4.1 — 2026-07-22
+
+### Fixed
+
+- When no live Boston Red Sox game is available, the live-source chooser now reliably remains visible instead of accepting a stale default action.
+- Minor-league and other unrelated live events never bypass the chooser; the regular 24/7 NESN channel remains available alongside them.
+- The chooser is brought to the foreground and requires an explicit Watch click.
+
 ## 1.4.0 — 2026-07-19
 
 ### Added
