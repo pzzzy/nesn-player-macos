@@ -2,6 +2,13 @@
 
 All notable user-facing changes are documented here.
 
+## 1.4.2 — 2026-08-18
+
+### Fixed
+
+- Dedicated live 4K playback now aligns the active audio output device to the feed's native 48 kHz clock, preventing the slowly accumulating 2–3 second audio lag seen during long home-game sessions.
+- The output device's prior sample rate is restored when NESN Player exits.
+
 ## 1.4.1 — 2026-07-22
 
 ### Fixed

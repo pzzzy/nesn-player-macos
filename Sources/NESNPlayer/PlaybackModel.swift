@@ -31,3 +31,7 @@ func scrubTarget(fraction: Double, duration: Double) -> Double {
     guard duration.isFinite, duration > 0 else { return 0 }
     return min(1, max(0, fraction)) * duration
 }
+
+func preferredOutputSampleRate(isUltraHD: Bool, isLiveContent: Bool) -> Double? {
+    isUltraHD && isLiveContent ? 48_000 : nil
+}

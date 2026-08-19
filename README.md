@@ -14,6 +14,7 @@ NESN may publish a home-game 4K broadcast as a **separate schedule event**, rath
    - FairPlay-protected HLS for ordinary feeds.
    - Direct HLS returned by the entitlement API for dedicated 4K feeds.
 4. Sets no application-level bitrate or resolution ceiling (`preferredPeakBitRate = 0` and `preferredMaximumResolution = .zero`). Final adaptive selection still depends on NESN's master playlist, network conditions, display capabilities, and AVFoundation.
+5. During dedicated live 4K playback, temporarily matches the active audio output device to the feed's native 48 kHz clock to prevent long-session A/V drift. The device's prior sample rate is restored when the player exits.
 
 When launched from Terminal, the player writes non-sensitive diagnostics to standard error. These report the master playlist's maximum resolution, frame rate, HDR/HEVC flags, audio-channel count and bandwidth, followed by AVPlayer's indicated and observed bitrates. Stream URLs, authorization tokens and DRM material are not logged.
 

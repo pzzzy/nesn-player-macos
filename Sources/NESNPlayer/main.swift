@@ -16,12 +16,15 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
     let channelID: String?
     let launchWindow: NSWindow?
     let isLiveContent: Bool
+    let isUltraHD: Bool
+    var audioSampleRateLease: AudioSampleRateLease?
     let session = URLSession(configuration: .default)
-    init(config: Config, channelID: String? = nil, launchWindow: NSWindow? = nil, isLiveContent: Bool = true) {
+    init(config: Config, channelID: String? = nil, launchWindow: NSWindow? = nil, isLiveContent: Bool = true, isUltraHD: Bool = false) {
         self.config = config
         self.channelID = channelID
         self.launchWindow = launchWindow
         self.isLiveContent = isLiveContent
+        self.isUltraHD = isUltraHD
     }
 
     func applicationDidFinishLaunching(_ note: Notification) {
@@ -72,6 +75,13 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
             fputs("Stream quality: indicated=\(Int(event.indicatedBitrate))bps observed=\(Int(event.observedBitrate))bps\n", stderr)
         }
         player = AVPlayer(playerItem: item)
+        if let sampleRate = preferredOutputSampleRate(isUltraHD: isUltraHD, isLiveContent: isLiveContent) {
+            do {
+                audioSampleRateLease = try AudioSampleRateLease(preferredRate: sampleRate)
+            } catch {
+                fputs("4K audio clock alignment unavailable: \(error)\n", stderr)
+            }
+        }
         let initialFrame = NSRect(x: 0, y: 0, width: 1280, height: 720)
         let playbackView = PlaybackView(frame: initialFrame, player: player, isLiveContent: isLiveContent)
         window = NSWindow(contentRect: initialFrame, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -104,6 +114,12 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
         }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
+        audioSampleRateLease?.restore()
+    }
 
     nonisolated func resourceLoader(_ resourceLoader: AVAssetResourceLoader, shouldWaitForLoadingOfRequestedResource request: AVAssetResourceLoadingRequest) -> Bool {
         guard request.request.url?.scheme == "skd" else { return false }
@@ -185,7 +201,8 @@ do {
                 return
             }
             let config = Config(contentID: item.contentID, title: item.choice.title, url: "", certificateUrl: "", licenseUrl: "", licenseToken: "")
-            let delegate = AppDelegate(config: config, channelID: item.channelID, launchWindow: launchWindow, isLiveContent: item.choice.isLive)
+            let isUltraHD = item.choice.title.localizedCaseInsensitiveContains("4K") || item.choice.title.localizedCaseInsensitiveContains("UHD")
+            let delegate = AppDelegate(config: config, channelID: item.channelID, launchWindow: launchWindow, isLiveContent: item.choice.isLive, isUltraHD: isUltraHD)
             app.delegate = delegate
             // Keep the delegate alive for the process lifetime.
             objc_setAssociatedObject(app, "NESNPlayerDelegate", delegate, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
