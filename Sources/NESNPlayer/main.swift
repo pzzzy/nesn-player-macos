@@ -18,6 +18,7 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
     let isLiveContent: Bool
     let isUltraHD: Bool
     var audioSampleRateLease: AudioSampleRateLease?
+    var externalPlaybackObservation: NSKeyValueObservation?
     let session = URLSession(configuration: .default)
     init(config: Config, channelID: String? = nil, launchWindow: NSWindow? = nil, isLiveContent: Bool = true, isUltraHD: Bool = false) {
         self.config = config
@@ -75,6 +76,10 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
             fputs("Stream quality: indicated=\(Int(event.indicatedBitrate))bps observed=\(Int(event.observedBitrate))bps\n", stderr)
         }
         player = AVPlayer(playerItem: item)
+        configurePlayerForAirPlay(player)
+        externalPlaybackObservation = player.observe(\.isExternalPlaybackActive, options: [.initial, .new]) { player, _ in
+            fputs("AirPlay external playback active: \(player.isExternalPlaybackActive)\n", stderr)
+        }
         if let sampleRate = preferredOutputSampleRate(isUltraHD: isUltraHD, isLiveContent: isLiveContent) {
             do {
                 audioSampleRateLease = try AudioSampleRateLease(preferredRate: sampleRate)

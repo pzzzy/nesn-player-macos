@@ -1,4 +1,9 @@
 import Foundation
+import AVFoundation
+
+func configurePlayerForAirPlay(_ player: AVPlayer) {
+    player.allowsExternalPlayback = true
+}
 
 enum LivePlaybackState: Equatable {
     case live

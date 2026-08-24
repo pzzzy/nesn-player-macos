@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     guard condition() else {
@@ -45,4 +46,8 @@ expect(scrubTarget(fraction: 0.5, duration: 120) == 60, "VOD scrub target")
 expect(preferredOutputSampleRate(isUltraHD: true, isLiveContent: true) == 48_000, "live 4K playback matches its 48 kHz audio clock")
 expect(preferredOutputSampleRate(isUltraHD: false, isLiveContent: true) == nil, "ordinary live playback preserves the output sample rate")
 expect(preferredOutputSampleRate(isUltraHD: true, isLiveContent: false) == nil, "4K replay playback preserves the output sample rate")
+let airPlayPlayer = AVPlayer()
+airPlayPlayer.allowsExternalPlayback = false
+configurePlayerForAirPlay(airPlayPlayer)
+expect(airPlayPlayer.allowsExternalPlayback, "native AirPlay playback is enabled on the active player")
 print("PlaybackModelTests passed")

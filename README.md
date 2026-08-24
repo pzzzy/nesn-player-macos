@@ -39,10 +39,12 @@ Stream quality: indicated=19421600bps observed=323829854bps
 2. Open **NESN Player**.
 3. The player queries NESN's current catalog. A dedicated live Red Sox 4K/UHD event is preferred automatically. When no unambiguous live Red Sox game is available, a launch chooser offers current live events, the regular NESN linear channel, and recent Red Sox full-game replays.
 4. Resize freely or use the green button / Control-Command-F.
+5. Move the pointer over the video and use the native AirPlay button to send the active stream to an Apple TV on the same network. Playback remains controlled by NESN Player and uses AVFoundation's protected-media path.
 
 ## Playback controls
 
 - Move the pointer over the video to reveal the compact control bar.
+- Use the AirPlay button in the control bar to choose an Apple TV or return playback to this Mac.
 - Scroll vertically over the player to adjust volume.
 - For live sources, wheel events never scrub. **Replay 30 seconds** jumps backward within the provider's current seekable HLS window, while **GO LIVE** returns to the live edge. The status light is green at the live edge and red while delayed.
 - For on-demand full-game replays, a mouse-enabled scrub bar and elapsed/total duration display permit normal seeking. The live-edge indicator is omitted.

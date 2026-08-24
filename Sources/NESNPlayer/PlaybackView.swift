@@ -49,6 +49,7 @@ final class PlaybackView: NSView {
     private let liveLight = NSView()
     private let liveButton = ActionButton(title: "LIVE", handler: {})
     private let playButton = ActionButton(title: "Pause", symbolName: "pause.fill", handler: {})
+    private let routePicker = AVRoutePickerView()
     private let scrubber = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
     private let timeLabel = NSTextField(labelWithString: "0:00 / 0:00")
     private var timeObserver: Any?
@@ -112,6 +113,13 @@ final class PlaybackView: NSView {
         playButton.actionHandler = { [weak self] in self?.togglePlayback() }
         playButton.imagePosition = .imageOnly
 
+        routePicker.translatesAutoresizingMaskIntoConstraints = false
+        routePicker.player = player
+        routePicker.setRoutePickerButtonColor(.white, for: .normal)
+        routePicker.setRoutePickerButtonColor(.systemBlue, for: .active)
+        routePicker.toolTip = "AirPlay to Apple TV"
+        routePicker.setAccessibilityLabel("AirPlay to Apple TV")
+
         liveLight.translatesAutoresizingMaskIntoConstraints = false
         liveLight.wantsLayer = true
         liveLight.layer?.cornerRadius = 5
@@ -124,8 +132,8 @@ final class PlaybackView: NSView {
         liveStack.alignment = .centerY
 
         let transportViews: [NSView] = isLiveContent
-            ? [volumeIcon, volumeLabel, replayButton, playButton, liveStack]
-            : [volumeIcon, volumeLabel, replayButton, playButton]
+            ? [volumeIcon, volumeLabel, replayButton, playButton, routePicker, liveStack]
+            : [volumeIcon, volumeLabel, replayButton, playButton, routePicker]
         let transport = NSStackView(views: transportViews)
         transport.orientation = .horizontal
         transport.alignment = .centerY
@@ -168,6 +176,8 @@ final class PlaybackView: NSView {
             liveLight.widthAnchor.constraint(equalToConstant: 10),
             liveLight.heightAnchor.constraint(equalToConstant: 10),
             volumeLabel.widthAnchor.constraint(equalToConstant: 40),
+            routePicker.widthAnchor.constraint(equalToConstant: 28),
+            routePicker.heightAnchor.constraint(equalToConstant: 28),
         ])
         updateVolumeLabel()
         showControls()
