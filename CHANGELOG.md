@@ -2,6 +2,18 @@
 
 All notable user-facing changes are documented here.
 
+## 1.5.0 — 2026-08-24
+
+### Added
+
+- Native AirPlay route selection in the playback control bar for sending the active NESN stream directly to an Apple TV on the same network.
+- Accessible labeling and active-route state feedback for the AirPlay control.
+
+### Verified
+
+- Live NESN linear playback at 1920×1080p60 and the top advertised 8.128 Mbps rendition while AVFoundation external playback was active on an Apple TV.
+- Protected playback remains in the native AVFoundation/FairPlay path without recording, restreaming, or video transcoding.
+
 ## 1.4.2 — 2026-08-18
 
 ### Fixed

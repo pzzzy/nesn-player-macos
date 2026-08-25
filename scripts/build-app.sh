@@ -33,5 +33,5 @@ cd "$ROOT/dist"
 rm -f NESN-Player-v1.5.0-macOS.zip NESN-Player-v1.5.0-macOS.zip.sha256
 COPYFILE_DISABLE=1 /usr/bin/zip -qry "NESN-Player-v1.5.0-macOS.zip" "NESN Player.app" -x '*/.DS_Store'
 HASH=$(shasum -a 256 "NESN-Player-v1.5.0-macOS.zip" | cut -d' ' -f1)
-printf '%s  dist/%s\n' "$HASH" "NESN-Player-v1.5.0-macOS.zip" > "NESN-Player-v1.5.0-macOS.zip.sha256"
+printf '%s  %s\n' "$HASH" "NESN-Player-v1.5.0-macOS.zip" > "NESN-Player-v1.5.0-macOS.zip.sha256"
 echo "$APP"
