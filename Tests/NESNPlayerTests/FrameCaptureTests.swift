@@ -1,5 +1,7 @@
 import AVFoundation
 import CoreGraphics
+import CoreImage
+import CoreVideo
 import ImageIO
 #if canImport(XCTest) && !FRAME_CAPTURE_STANDALONE
 import XCTest
@@ -28,7 +30,11 @@ private func XCTAssertThrowsError<T>(_ expression: @autoclosure () throws -> T, 
         await tests.testUnapprovedCaptureFailsBeforeOpeningAsset()
         await tests.testUnextractableClearAssetHasSanitizedFailure()
         try tests.testFloatHDRHeadroomIsPreservedOrRejected()
-        print("FrameCapture: 7 tests passed (standalone assertions; no XCTest installed)")
+        await tests.testCurrentPlayerAuthorizationAndTimeout()
+        try await tests.testCurrentClearHLSHDRExport()
+        print(ProcessInfo.processInfo.environment["FRAME_CAPTURE_HLS_URL"] == nil
+              ? "FrameCapture: 8 tests passed; HLS integration skipped (set FRAME_CAPTURE_HLS_URL)"
+              : "FrameCapture: 9 tests passed including serialized HDR HLS integration")
         if CommandLine.arguments.count == 2 {
             let url = URL(fileURLWithPath: CommandLine.arguments[1])
             do {
@@ -46,6 +52,80 @@ private func XCTAssertThrowsError<T>(_ expression: @autoclosure () throws -> T, 
 #endif
 
 final class FrameCaptureTests: XCTestCase {
+    @MainActor
+    func testCurrentPlayerAuthorizationAndTimeout() async {
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: AVMutableComposition()))
+        player.isMuted = true
+        let item = player.currentItem!
+        do {
+            _ = try await FrameCapture.capture(player: player, authorized: false, timeout: 0.1)
+            XCTFail("Authorization required")
+        } catch { XCTAssertEqual(error as? FrameCapture.Failure, .notAuthorized) }
+        do {
+            _ = try await FrameCapture.capture(player: player, authorized: true, timeout: 0.1)
+            XCTFail("Empty item cannot yield a frame")
+        } catch { XCTAssertTrue(error is FrameCapture.Failure) }
+        XCTAssertEqual(item.outputs.count, 0)
+        XCTAssertTrue(player.currentItem === item)
+        XCTAssertEqual(player.rate, 0)
+        let task = Task { try await FrameCapture.capture(player: player, authorized: true, timeout: 1) }
+        task.cancel()
+        do { _ = try await task.value; XCTFail("Cancellation required") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertEqual(item.outputs.count, 0)
+    }
+
+    /// Opt-in, video-only synthetic fixture on loopback. Never accepts provider URLs.
+    /// FRAME_CAPTURE_HLS_URL=.../neutral.m3u8 (320x180 Y723 PQ), optionally
+    /// FRAME_CAPTURE_EXPORT=/tmp/.../hls.tiff keeps the actual serialized evidence.
+    @MainActor
+    func testCurrentClearHLSHDRExport() async throws {
+        guard let raw = ProcessInfo.processInfo.environment["FRAME_CAPTURE_HLS_URL"] else { return }
+        let url = try XCTUnwrap(URL(string: raw))
+        guard url.scheme == "http", url.host == "127.0.0.1", url.lastPathComponent == "neutral.m3u8" else {
+            XCTFail("Only the synthetic loopback neutral fixture is permitted"); return
+        }
+        let player = AVPlayer()
+        player.isMuted = true
+        let item = AVPlayerItem(url: url)
+        player.replaceCurrentItem(with: item)
+        player.automaticallyWaitsToMinimizeStalling = false
+        player.play()
+        defer { player.pause(); player.replaceCurrentItem(with: nil) }
+        // Attach on demand AFTER playback starts, not during item setup.
+        try await Task.sleep(for: .milliseconds(600))
+        let rate = player.rate
+        let before = player.currentTime()
+        let result = try await FrameCapture.capture(player: player, authorized: true, timeout: 8)
+        XCTAssertTrue(player.currentItem === item)
+        XCTAssertEqual(player.rate, rate)
+        XCTAssertTrue(player.isMuted)
+        XCTAssertTrue(player.currentTime() >= before)
+        XCTAssertEqual(item.outputs.count, 0)
+        XCTAssertEqual(result.width, 320)
+        XCTAssertEqual(result.height, 180)
+        XCTAssertEqual(result.bitsPerComponent, 16)
+        XCTAssertTrue(result.verifiedHDR)
+        let target = ProcessInfo.processInfo.environment["FRAME_CAPTURE_EXPORT"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".tiff")
+        try FrameCapture.save(result, to: target)
+        defer { if ProcessInfo.processInfo.environment["FRAME_CAPTURE_EXPORT"] == nil { try? FileManager.default.removeItem(at: target) } }
+        let source = try XCTUnwrap(CGImageSourceCreateWithURL(target as CFURL, nil))
+        let decoded = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        XCTAssertTrue(CGColorSpaceUsesITUR_2100TF(try XCTUnwrap(decoded.colorSpace)))
+        if #available(macOS 15.0, *) {
+            XCTAssertTrue(abs(decoded.contentHeadroom - 4.92610836) < 0.001)
+        }
+        let linear = try XCTUnwrap(CGColorSpace(name: CGColorSpace.extendedLinearITUR_2020))
+        let context = CIContext(options: [.workingColorSpace: linear, .workingFormat: CIFormat.RGBAf.rawValue])
+        var pixel = [Float](repeating: 0, count: 4)
+        context.render(CIImage(cgImage: decoded), toBitmap: &pixel, rowBytes: 16,
+                       bounds: CGRect(x: 100, y: 80, width: 1, height: 1), format: .RGBAf, colorSpace: linear)
+        // PQ EOTF(Y723) / 203 = 4.946758148, independently calibrated in fixture.
+        for value in pixel.prefix(3) { XCTAssertTrue(abs(value - 4.946758148) < 0.02) }
+        print("HLS EXPORTED: \(target.path), \(result.width)x\(result.height), 16-bit PQ; decoded linear RGB=\(pixel)")
+    }
+
     private func image(bits: Int, space: CFString = CGColorSpace.sRGB, width: Int = 73, height: Int = 41) throws -> CGImage {
         let color = try XCTUnwrap(CGColorSpace(name: space))
         let flags = CGImageAlphaInfo.noneSkipLast.rawValue | (bits == 16 ? CGBitmapInfo.byteOrder16Little.rawValue : 0)
