@@ -34,9 +34,9 @@ enum ScheduleClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(authorization, forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await APISession.shared.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw NSError(domain:"NESNSchedule", code:(response as? HTTPURLResponse)?.statusCode ?? 0) }
-        let object = try JSONSerialization.jsonObject(with: data)
+        let object = try GraphQLPage.parse(data).object
         var results: [LiveEvent] = []
         collectGames(object, into: &results)
         let unique = Dictionary(grouping: results.filter { $0.streamID != nil }, by: { $0.id }).compactMap(\.value.first)

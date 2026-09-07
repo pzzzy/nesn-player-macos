@@ -32,6 +32,11 @@ struct Entitlement: Decodable {
     var is4K: Bool { video.streamingInfo.videoAssets.is4K == true }
 
     static func parse(_ data: Data) throws -> Entitlement {
+        struct Status: Decodable { let success: Bool?; let playable: Bool? }
+        let status = try JSONDecoder().decode(Status.self, from: data)
+        guard status.success != false, status.playable != false else {
+            throw NSError(domain: "NESNEntitlement", code: 403)
+        }
         let value = try JSONDecoder().decode(Entitlement.self, from: data)
         guard value.success, value.playable else { throw NSError(domain: "NESNEntitlement", code: 403) }
         return value
@@ -51,25 +56,37 @@ struct StreamCapabilities {
 enum MasterPlaylistInspector {
     static func inspect(_ text: String) -> StreamCapabilities {
         var q = StreamCapabilities()
-        for line in text.split(separator: "\n").map(String.init) {
-            if let r = line.range(of: #"RESOLUTION=(\d+)x(\d+)"#, options: .regularExpression) {
-                let parts = line[r].dropFirst("RESOLUTION=".count).split(separator: "x")
-                q.maximumWidth = max(q.maximumWidth, Int(parts[0]) ?? 0)
-                q.maximumHeight = max(q.maximumHeight, Int(parts[1]) ?? 0)
+        for rawLine in text.split(separator: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard line.hasPrefix("#EXT-X-STREAM-INF:") || line.hasPrefix("#EXT-X-I-FRAME-STREAM-INF:") || line.hasPrefix("#EXT-X-MEDIA:") else { continue }
+            let body = String(line.dropFirst(line.firstIndex(of: ":")!.utf16Offset(in: line) + 1))
+            // Split commas outside quoted strings; attribute names must match exactly.
+            var fields: [String] = [], field = "", quoted = false
+            for character in body {
+                if character == "\"" { quoted.toggle() }
+                if character == ",", !quoted { fields.append(field); field = "" }
+                else { field.append(character) }
             }
-            if let r = line.range(of: #"FRAME-RATE=([0-9.]+)"#, options: .regularExpression) {
-                q.maximumFrameRate = max(q.maximumFrameRate, Double(line[r].dropFirst("FRAME-RATE=".count)) ?? 0)
+            fields.append(field)
+            var attributes: [String: String] = [:]
+            for field in fields {
+                let pair = field.split(separator: "=", maxSplits: 1).map(String.init)
+                if pair.count == 2 { attributes[pair[0].trimmingCharacters(in: .whitespaces)] = pair[1].trimmingCharacters(in: CharacterSet(charactersIn: "\" ")) }
             }
-            if let r = line.range(of: #"BANDWIDTH=(\d+)"#, options: .regularExpression) {
-                q.maximumBandwidth = max(q.maximumBandwidth, Int(line[r].dropFirst("BANDWIDTH=".count)) ?? 0)
+            if let resolution = attributes["RESOLUTION"] {
+                let parts = resolution.split(separator: "x")
+                if parts.count == 2 {
+                    q.maximumWidth = max(q.maximumWidth, Int(parts[0]) ?? 0)
+                    q.maximumHeight = max(q.maximumHeight, Int(parts[1]) ?? 0)
+                }
             }
-            if let r = line.range(of: #"CHANNELS="?(\d+)"?"#, options: .regularExpression) {
-                let digits = line[r].filter(\.isNumber)
-                q.maximumAudioChannels = max(q.maximumAudioChannels, Int(digits) ?? 0)
-            }
-            let upper = line.uppercased()
-            q.supportsHDR = q.supportsHDR || upper.contains("VIDEO-RANGE=PQ") || upper.contains("VIDEO-RANGE=HLG")
-            q.supportsHEVC = q.supportsHEVC || line.contains("hvc1") || line.contains("hev1")
+            q.maximumBandwidth = max(q.maximumBandwidth, Int(attributes["BANDWIDTH"] ?? "") ?? 0)
+            q.maximumFrameRate = max(q.maximumFrameRate, Double(attributes["FRAME-RATE"] ?? "") ?? 0)
+            let channels = attributes["CHANNELS"]?.split(separator: "/").first.map(String.init) ?? ""
+            q.maximumAudioChannels = max(q.maximumAudioChannels, Int(channels) ?? 0)
+            q.supportsHDR = q.supportsHDR || ["PQ", "HLG"].contains(attributes["VIDEO-RANGE"] ?? "")
+            let codecs = (attributes["CODECS"] ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).split(separator: ".").first.map(String.init) ?? "" }
+            q.supportsHEVC = q.supportsHEVC || codecs.contains("hvc1") || codecs.contains("hev1")
         }
         return q
     }
@@ -139,13 +156,24 @@ enum EntitlementClient {
         request.setValue("L1", forHTTPHeaderField: "sl")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("NESN 360/8 CFNetwork/3860 Darwin/25", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await APISession.shared.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw NSError(domain: "NESNEntitlement", code: (response as? HTTPURLResponse)?.statusCode ?? 0) }
         return try Entitlement.parse(data)
     }
 }
 
 enum LinearEntitlementClient {
+    static func parse(_ data: Data) throws -> Entitlement {
+        struct Status: Decodable { let playable: Bool?; let success: Bool? }
+        let status = try JSONDecoder().decode(Status.self, from: data)
+        guard status.playable == true, status.success != false else {
+            throw NSError(domain: "NESNLinearEntitlement", code: 403)
+        }
+        struct Response: Decodable { let linearchannel: Entitlement.Video }
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        return Entitlement(playable: true, success: true, video: response.linearchannel)
+    }
+
     static func fetch(linearID: String, channelID: String, authorization: String) async throws -> Entitlement {
         var components = URLComponents(string: "https://nesn.api.viewlift.com/v3/entitlement/linearchannel")!
         components.queryItems = [
@@ -159,26 +187,10 @@ enum LinearEntitlementClient {
         request.setValue("L1", forHTTPHeaderField: "sl")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("NESN 360/8 CFNetwork/3860 Darwin/25", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await APISession.shared.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             throw NSError(domain: "NESNLinearEntitlement", code: (response as? HTTPURLResponse)?.statusCode ?? 0)
         }
-        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard object?["playable"] as? Bool == true,
-              let linear = object?["linearchannel"] as? [String: Any],
-              let info = linear["streamingInfo"] as? [String: Any],
-              let assets = info["videoAssets"] as? [String: Any],
-              let fp = assets["fairPlay"] as? [String: Any],
-              let url = fp["url"] as? String, let certificate = fp["certificateUrl"] as? String,
-              let license = fp["licenseUrl"] as? String, let token = fp["licenseToken"] as? String,
-              let id = linear["id"] as? String, let title = linear["title"] as? String else {
-            throw NSError(domain: "NESNLinearEntitlement", code: 422)
-        }
-        let synthetic: [String: Any] = ["playable": true, "success": true, "video": [
-            "id": id, "title": title, "streamingInfo": ["videoAssets": ["fairPlay": [
-                "url": url, "certificateUrl": certificate, "licenseUrl": license, "licenseToken": token,
-            ]]],
-        ]]
-        return try Entitlement.parse(JSONSerialization.data(withJSONObject: synthetic))
+        return try parse(data)
     }
 }
