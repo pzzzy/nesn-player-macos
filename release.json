@@ -1,6 +1,6 @@
 {
-  "version": "1.6.0-dev",
-  "build": "9",
+  "version": "1.6.0",
+  "build": "10",
   "architecture": "arm64",
   "minimum_macos": "14.0"
 }

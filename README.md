@@ -4,7 +4,7 @@ Independent native AVFoundation player for **current NESN subscribers** on **App
 
 **[Download the latest published release](https://github.com/pzzzy/nesn-player-macos/releases/latest)** · [Changelog](CHANGELOG.md)
 
-This source tree is **1.6.0-dev, build 9: an unreleased candidate**. **v1.5.0 remains the published release**; its verification does not certify this candidate. Live playback, AirPlay, audio restoration and actual NESN live screenshots still need separate acceptance checks.
+Version **1.6.0, build 10** adds safer source selection, responsive controls and background HDR still capture. Published v1.6.0 binaries are Developer ID signed and Apple-notarized. Long-session audio drift and the broader AirPlay/device-transition matrix have not been revalidated for this version.
 
 ## Install a published build
 
@@ -15,7 +15,7 @@ This source tree is **1.6.0-dev, build 9: an unreleased candidate**. **v1.5.0 re
    ```
    Require `OK` before extracting. The checksum detects corruption; it authenticates neither the author nor a compromised download page.
 3. Extract the ZIP and move **NESN Player.app** to your Applications folder. Quit an older copy before replacing it; keep its archive for rollback.
-4. The app is **ad-hoc signed, not Developer ID signed or notarized**. If macOS blocks it, review the source and publisher before using the per-app approval in **System Settings → Privacy & Security → Open Anyway**, where available. Managed Macs may prohibit this. Never disable Gatekeeper globally or strip quarantine recursively.
+4. The v1.6.0 release is **Developer ID signed and Apple-notarized**, with a stapled ticket. macOS may show its normal first-open downloaded-app confirmation. If verification fails, stop and check the release source; do not disable Gatekeeper or remove quarantine. Older releases and local source builds are ad-hoc signed.
 5. Sign into the official NESN 360 app, then open NESN Player. No password is entered in this player.
 
 There is no automatic updater. Install updates manually from releases, or build from reviewed source.
@@ -25,14 +25,14 @@ There is no automatic updater. Install updates manually from releases, or build 
 - Native AVFoundation/FairPlay playback, freely resizable windows and macOS fullscreen (green button / Control-Command-F).
 - Automatic selection is reserved for an unambiguous primary live Red Sox source, with dedicated UHD preference. Otherwise choose explicitly from live, linear and replay sources.
 - Quality is uncapped; selected resolution depends on entitlement, the provider, network, display and AVFoundation. A UHD event can be separate from the ordinary HD source.
-- Move the pointer over the video for controls. Candidate controls adapt to smaller windows; **Browse sources** reopens source selection, with retry available after failures. **Pause** remains available while playback is buffering. Scroll vertically for volume; live wheel events never scrub.
+- Move the pointer over the video for controls. Controls adapt to smaller windows; **Browse sources** reopens source selection, with retry available after failures. **Pause** remains available while playback is buffering. Scroll vertically for volume; live wheel events never scrub.
 - **Replay 30 seconds** stays within the available live seekable window; **GO LIVE** returns to the edge. VOD has a seek bar.
 - Use the native AirPlay button for Apple TV selection or return to local playback. Route/provider restrictions can still prevent playback.
-- Dedicated live UHD may temporarily align local audio output to 48 kHz to address clock drift. Candidate cleanup restores the prior rate asynchronously without intentionally overwriting newer user changes; route and long-session acceptance are still pending. Force-kill/crash restoration is not guaranteed.
-- **Capture frame** (or **S**) saves a personal still through native AVFoundation APIs, at the original decoded frame resolution rather than the window size. High-precision/HDR frames use TIFF; ordinary SDR frames may use PNG. The clear-HLS current-frame path preserves PQ HDR in 16-bit TIFF without display tone mapping.
+- Dedicated live UHD may temporarily align local audio output to 48 kHz to address clock drift. Cleanup restores the prior rate asynchronously without intentionally overwriting newer user changes; route and long-session acceptance are still pending. Force-kill/crash restoration is not guaranteed.
+- **Capture frame** (or **S**) saves a personal still through native AVFoundation APIs, at the original decoded frame resolution rather than the window size. Screenshots save automatically as uniquely named TIFF files on Desktop, without a save dialog. Conversion and writing run off the UI thread; brief inline feedback reports the result. The clear-HLS current-frame path preserves PQ HDR in 16-bit TIFF without display tone mapping.
 - Capture is capability-gated: not all sources or output routes expose a frame. FairPlay/protected content is rejected, never bypassed. A paused stream may time out waiting for a decoded frame; resume playback and retry. No recording, restreaming or video export.
 
-Clear-HLS HDR capture has been validated with a local calibrated fixture, including pixels decoded from the saved TIFF, not just metadata. **An actual NESN live screenshot has not yet been verified.** This does not establish capture support for every stream, HDR format or output route.
+Clear-HLS HDR capture has been validated with a local calibrated fixture, including pixels decoded from the saved TIFF, not just metadata. Actual live NESN clear-source PQ TIFF capture and automatic Desktop saving were also verified. Capture preserves the currently decoded adaptive rendition, which may be below the advertised 4K maximum. This does not establish capture support for every stream, HDR format or output route.
 
 ## Troubleshooting
 
@@ -58,7 +58,7 @@ cd nesn-player-macos
 python3 scripts/verify-artifact.py
 ```
 
-Candidate metadata identifies `1.6.0-dev`, build `9`; the numeric bundle short version (`CFBundleShortVersionString`) is `1.6.0`. This is not a release promotion.
+Release metadata identifies `1.6.0`, build `10`. Source builds remain ad-hoc signed; only the published release archive is Developer ID signed and notarized.
 
 The script uses two release-build jobs, the committed icon PNG, explicit arm64/macOS 14 metadata and `release.json` as its version source. It includes LICENSE and verifies signature, metadata, architecture, deployment floor, archive contents and SHA-256. Outputs stay in `dist/`; **nothing is installed or launched**. Open `dist/NESN Player.app` manually when ready. Pillow is optional for icon regeneration only.
 
