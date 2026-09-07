@@ -1,6 +1,9 @@
 .build/
 build/
 dist/
+notarized/
+*.p8
+*.p12
 .DS_Store
 *.chls
 *.chlsz

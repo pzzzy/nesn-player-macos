@@ -1,84 +1,71 @@
 # NESN Player for macOS
 
-An independent native macOS player for **current NESN subscribers** who have installed and signed into the official NESN 360 iPad app on Apple-silicon Mac hardware.
+Independent native AVFoundation player for **current NESN subscribers** on **Apple silicon (arm64), macOS 14 or later**. Requires the official NESN 360 iPad app installed and signed in on the Mac plus an active entitlement. Not affiliated with NESN or Apple.
 
-It uses Apple's native AVFoundation playback path, offers freely resizable windows and true macOS fullscreen, and leaves adaptive streaming uncapped so AVPlayer can select the highest sustainable rendition.
+**[Download the latest published release](https://github.com/pzzzy/nesn-player-macos/releases/latest)** · [Changelog](CHANGELOG.md)
 
-## Video quality and dedicated 4K events
+Version **1.6.0, build 10** adds safer source selection, responsive controls and background HDR still capture. Published v1.6.0 binaries are Developer ID signed and Apple-notarized. Long-session audio drift and the broader AirPlay/device-transition matrix have not been revalidated for this version.
 
-NESN may publish a home-game 4K broadcast as a **separate schedule event**, rather than as a rendition inside the ordinary HD event. NESN Player therefore:
+## Install a published build
 
-1. Prefers a live event whose title identifies it as `4K` or `UHD`.
-2. Falls back to the primary Red Sox telecast when no dedicated UHD event exists.
-3. Supports both NESN delivery forms currently observed:
-   - FairPlay-protected HLS for ordinary feeds.
-   - Direct HLS returned by the entitlement API for dedicated 4K feeds.
-4. Sets no application-level bitrate or resolution ceiling (`preferredPeakBitRate = 0` and `preferredMaximumResolution = .zero`). Final adaptive selection still depends on NESN's master playlist, network conditions, display capabilities, and AVFoundation.
-5. During dedicated live 4K playback, temporarily matches the active audio output device to the feed's native 48 kHz clock to prevent long-session A/V drift. The device's prior sample rate is restored when the player exits.
+1. Download the arm64 macOS ZIP and matching `.sha256` file from the same trusted release. Older releases may omit `arm64` in the filename.
+2. In Terminal, change to the download folder and verify the exact downloaded checksum file:
+   ```sh
+   shasum -a 256 -c NAME-OF-DOWNLOADED.zip.sha256
+   ```
+   Require `OK` before extracting. The checksum detects corruption; it authenticates neither the author nor a compromised download page.
+3. Extract the ZIP and move **NESN Player.app** to your Applications folder. Quit an older copy before replacing it; keep its archive for rollback.
+4. The v1.6.0 release is **Developer ID signed and Apple-notarized**, with a stapled ticket. macOS may show its normal first-open downloaded-app confirmation. If verification fails, stop and check the release source; do not disable Gatekeeper or remove quarantine. Older releases and local source builds are ad-hoc signed.
+5. Sign into the official NESN 360 app, then open NESN Player. No password is entered in this player.
 
-When launched from Terminal, the player writes non-sensitive diagnostics to standard error. These report the master playlist's maximum resolution, frame rate, HDR/HEVC flags, audio-channel count and bandwidth, followed by AVPlayer's indicated and observed bitrates. Stream URLs, authorization tokens and DRM material are not logged.
+There is no automatic updater. Install updates manually from releases, or build from reviewed source.
 
-Example from a verified dedicated feed:
+## Playback and controls
 
-```text
-Master capabilities: 3840x2160 @ 59.94fps, HDR=true, HEVC=true, audioChannels=6, bandwidth=16781600bps
-Stream quality: indicated=19421600bps observed=323829854bps
-```
+- Native AVFoundation/FairPlay playback, freely resizable windows and macOS fullscreen (green button / Control-Command-F).
+- Automatic selection is reserved for an unambiguous primary live Red Sox source, with dedicated UHD preference. Otherwise choose explicitly from live, linear and replay sources.
+- Quality is uncapped; selected resolution depends on entitlement, the provider, network, display and AVFoundation. A UHD event can be separate from the ordinary HD source.
+- Move the pointer over the video for controls. Controls adapt to smaller windows; **Browse sources** reopens source selection, with retry available after failures. **Pause** remains available while playback is buffering. Scroll vertically for volume; live wheel events never scrub.
+- **Replay 30 seconds** stays within the available live seekable window; **GO LIVE** returns to the edge. VOD has a seek bar.
+- Use the native AirPlay button for Apple TV selection or return to local playback. Route/provider restrictions can still prevent playback.
+- Dedicated live UHD may temporarily align local audio output to 48 kHz to address clock drift. Cleanup restores the prior rate asynchronously without intentionally overwriting newer user changes; route and long-session acceptance are still pending. Force-kill/crash restoration is not guaranteed.
+- **Capture frame** (or **S**) saves a personal still through native AVFoundation APIs, at the original decoded frame resolution rather than the window size. Screenshots save automatically as uniquely named TIFF files on Desktop, without a save dialog. Conversion and writing run off the UI thread; brief inline feedback reports the result. The clear-HLS current-frame path preserves PQ HDR in 16-bit TIFF without display tone mapping.
+- Capture is capability-gated: not all sources or output routes expose a frame. FairPlay/protected content is rejected, never bypassed. A paused stream may time out waiting for a decoded frame; resume playback and retry. No recording, restreaming or video export.
 
-`indicated` is the bitrate AVPlayer reports for the selected rendition. `observed` is measured delivery throughput, not the encoded video bitrate.
+Clear-HLS HDR capture has been validated with a local calibrated fixture, including pixels decoded from the saved TIFF, not just metadata. Actual live NESN clear-source PQ TIFF capture and automatic Desktop saving were also verified. Capture preserves the currently decoded adaptive rendition, which may be below the advertised 4K maximum. This does not establish capture support for every stream, HDR format or output route.
 
-## Requirements
+## Troubleshooting
 
-- Apple-silicon Mac running macOS 14 or later
-- Official NESN 360 app installed and signed in
-- Active NESN/TV-provider entitlement
+| Symptom | Next step |
+| --- | --- |
+| Missing/expired session | Sign in again in the official NESN 360 app, then retry the player. |
+| Entitlement denied | Verify subscription, location and source availability in the official app; do not bypass denial. |
+| Catalog/provider error | Check the official app; retry later or choose another available source. |
+| Network failure | Check connectivity; retry without posting request URLs. |
+| DRM or AirPlay failure | Try authorized local playback; check route/provider support and report only a safe error code/category. |
+| Capture unavailable or timed out | Protected sources/output routes may forbid capture. For a paused clear stream, resume and retry; do not bypass protection or grant screen-recording access as a workaround. |
 
-## Use
-
-1. Install and sign into the official NESN 360 app. You do not need to start a game there.
-2. Open **NESN Player**.
-3. The player queries NESN's current catalog. A dedicated live Red Sox 4K/UHD event is preferred automatically. When no unambiguous live Red Sox game is available, a launch chooser offers current live events, the regular NESN linear channel, and recent Red Sox full-game replays.
-4. Resize freely or use the green button / Control-Command-F.
-5. Move the pointer over the video and use the native AirPlay button to send the active stream to an Apple TV on the same network. Playback remains controlled by NESN Player and uses AVFoundation's protected-media path.
-
-## Playback controls
-
-- Move the pointer over the video to reveal the compact control bar.
-- Use the AirPlay button in the control bar to choose an Apple TV or return playback to this Mac.
-- Scroll vertically over the player to adjust volume.
-- For live sources, wheel events never scrub. **Replay 30 seconds** jumps backward within the provider's current seekable HLS window, while **GO LIVE** returns to the live edge. The status light is green at the live edge and red while delayed.
-- For on-demand full-game replays, a mouse-enabled scrub bar and elapsed/total duration display permit normal seeking. The live-edge indicator is omitted.
-- The player does not record or save video locally.
-
-The app reads the official app's local authorization session, queries NESN's live and replay catalogs, and requests a fresh playback entitlement for the selected source. It does not ask for, store, or transmit your password to any third party.
-
-## Contributing
-
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build, test, security, privacy, and pull-request guidelines.
+Advertised master capabilities are not proof of the active rendition. AVPlayer's indicated bitrate describes the selected rendition; observed bitrate is delivery throughput. Review/redact diagnostics before sharing; never upload raw network captures or official-app caches.
 
 ## Build from source
+
+Install Xcode Command Line Tools (Swift 6+) and Python 3 on an Apple-silicon Mac:
 
 ```sh
 git clone https://github.com/pzzzy/nesn-player-macos.git
 cd nesn-player-macos
 ./scripts/build-app.sh
-open "dist/NESN Player.app"
+python3 scripts/verify-artifact.py
 ```
 
-The build script requires Xcode command-line tools and creates an ad-hoc-signed application plus a versioned ZIP and SHA-256 file under `dist/`.
+Release metadata identifies `1.6.0`, build `10`. Source builds remain ad-hoc signed; only the published release archive is Developer ID signed and notarized.
 
-## Privacy and security
+The script uses two release-build jobs, the committed icon PNG, explicit arm64/macOS 14 metadata and `release.json` as its version source. It includes LICENSE and verifies signature, metadata, architecture, deployment floor, archive contents and SHA-256. Outputs stay in `dist/`; **nothing is installed or launched**. Open `dist/NESN Player.app` manually when ready. Pillow is optional for icon regeneration only.
 
-- No credentials, stream URLs, content keys, Charles captures, or account identifiers are included.
-- Authorization remains in the official NESN app container.
-- FairPlay SPC/CKC messages are handled by AVFoundation and NESN's license endpoint.
-- The project does not decrypt, save, redistribute, or bypass protected media.
-- See [SECURITY.md](SECURITY.md).
+For offline tests with Command Line Tools only, run `./Tests/run-tests.sh`. With full Xcode selected, run `nice -n 10 swift test --jobs 2`. See [CONTRIBUTING.md](CONTRIBUTING.md) for test scope and manual release gates; [SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
-## Legal / trademark
+## Privacy, legal and license
 
-Unofficial, unsupported, and not affiliated with NESN, ViewLift, Axinom, Apple, MLB, or the Boston Red Sox. NESN and related marks belong to their owners. Use requires a legitimate subscription and compliance with applicable service terms and law. No media, DRM keys, certificates, tokens, or proprietary application code are distributed.
+Authorization remains in the official app's local session. The player requests fresh NESN entitlements and uses the native protected-media path; it does not ask for your password or add third-party credential storage. Never share tokens, signed playback URLs, account/device identifiers, viewing history or SPC/CKC data.
 
-## License
-
-MIT for this project's original source code. See [LICENSE](LICENSE).
+Unofficial and unsupported; not affiliated with NESN, ViewLift, Axinom, Apple, MLB or the Boston Red Sox. Trademarks belong to their owners. Use only content you are authorized to access and comply with service terms and law. No proprietary media, credentials, DRM keys or application code are distributed. Original project source is [MIT licensed](LICENSE); packaged copies include the notice.

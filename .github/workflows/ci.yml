@@ -1,14 +1,43 @@
 name: CI
 on: [push, pull_request]
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
+    # Standard Apple-silicon runner; deployment target remains macOS 14.
     runs-on: macos-15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-      - name: Build
-        run: swift build -c release
-      - name: Playback behavior tests
-        run: ./Tests/run-tests.sh
-      - name: Security-sensitive artifact audit
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Toolchain and architecture
         run: |
-          ./scripts/verify-source.sh
+          test "$(uname -m)" = arm64
+          swift --version
+          xcodebuild -version
+      - name: Offline behavior tests
+        run: nice -n 10 swift test --jobs 2
+      - name: Artifact verifier regression tests
+        run: python3 scripts/test-artifact.py
+      - name: Source privacy audit
+        run: ./scripts/verify-source.sh
+      - name: Tag and version consistency
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/verify-artifact.py --check-tag "$RELEASE_TAG"
+      - name: Package and verify archive
+        run: ./scripts/build-app.sh
+      - name: Retain candidate artifacts (not a release)
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: NESN-Player-macOS-arm64-candidate
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7

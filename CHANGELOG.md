@@ -2,6 +2,21 @@
 
 All notable user-facing changes are documented here.
 
+## 1.6.0 (build 10)
+
+- Centralized release metadata; explicit arm64/macOS 14 packaging with bundled MIT license.
+- Added archive, SHA-256, ad-hoc signature, version and platform gates plus offline corruption regression tests.
+- Added read-only, bounded CI packaging and privacy-aware contribution/reporting forms.
+- Clarified installation, checksum trust and manual release requirements.
+- Added **Capture frame** / **S** for native, capability-gated still capture at original decoded resolution. High-precision frames use TIFF; clear HLS HDR current-frame capture supports 16-bit PQ TIFF without display tone mapping.
+- Validated clear-HLS HDR capture with a local calibrated fixture, including serialized TIFF pixels decoded back from disk. Actual live clear-source screenshots and Desktop saves were verified; protected or unsupported sources/routes remain unavailable, and paused capture may time out. No FairPlay bypass, recording or video export.
+- Added **Browse sources** and retry paths, Pause while buffering, responsive controls and asynchronous audio-rate restoration.
+- Final release uses version `1.6.0`, build `10`, Developer ID signing, hardened runtime and Apple notarization with a stapled ticket. Source builds retain ad-hoc signing.
+- Fixed overlapping Play/Pause text. Capture saves unique TIFFs automatically to Desktop using background processing and expiring inline feedback.
+- Added a 4K responsiveness regression measuring UI heartbeats and playback advancement during encoding.
+
+Live UHD playback and clear-source screenshots were verified. Long-session audio drift, real AirPlay/device transitions and the full VOD/linear matrix remain unverified for this version. Historical verification below applies only to the version named.
+
 ## 1.5.0 — 2026-08-24
 
 ### Added

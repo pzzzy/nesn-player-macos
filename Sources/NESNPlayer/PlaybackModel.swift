@@ -33,10 +33,59 @@ func scrubFraction(current: Double, duration: Double) -> Double {
 }
 
 func scrubTarget(fraction: Double, duration: Double) -> Double {
-    guard duration.isFinite, duration > 0 else { return 0 }
+    guard fraction.isFinite, duration.isFinite, duration > 0 else { return 0 }
     return min(1, max(0, fraction)) * duration
 }
 
 func preferredOutputSampleRate(isUltraHD: Bool, isLiveContent: Bool) -> Double? {
     isUltraHD && isLiveContent ? 48_000 : nil
+}
+
+enum PlaybackPhase: String {
+    case loading = "Loading", buffering = "Buffering", playing = "Playing"
+    case paused = "Paused", failed = "Playback failed", ended = "Ended"
+}
+
+/// User intent is distinct from AVPlayer's temporarily paused/waiting rate.
+struct PlaybackIntent {
+    private(set) var wantsPlayback = false
+    private var terminal: PlaybackPhase?
+    var actionLabel: String { wantsPlayback ? "Pause" : "Play" }
+    mutating func play() { terminal = nil; wantsPlayback = true }
+    mutating func pause() { wantsPlayback = false }
+    mutating func toggle() { wantsPlayback ? pause() : play() }
+    mutating func fail() { wantsPlayback = false; terminal = .failed }
+    mutating func end() { wantsPlayback = false; terminal = .ended }
+    func phase(status: AVPlayer.TimeControlStatus) -> PlaybackPhase {
+        if let terminal { return terminal }
+        guard wantsPlayback else { return .paused }
+        return status == .playing ? .playing : .buffering
+    }
+}
+
+/// A drag previews locally and commits one precise seek on release.
+struct ScrubSession {
+    private(set) var isActive = false
+    private(set) var resumePlayback = false
+    private(set) var target: Double?
+    mutating func begin(wasPlaying: Bool) {
+        guard !isActive else { return }
+        isActive = true; resumePlayback = wasPlaying; target = nil
+    }
+    mutating func update(target: Double) {
+        guard isActive, target.isFinite, target >= 0 else { return }
+        self.target = target
+    }
+    mutating func finish() -> Double? {
+        guard isActive else { return nil }
+        isActive = false
+        defer { target = nil }
+        return target
+    }
+    mutating func cancel() { isActive = false; target = nil; resumePlayback = false }
+}
+
+func shouldHidePlaybackControls(playing: Bool, scrubbing: Bool, pointerInControls: Bool,
+                                focusedControl: Bool, routePickerActive: Bool) -> Bool {
+    playing && !scrubbing && !pointerInControls && !focusedControl && !routePickerActive
 }

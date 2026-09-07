@@ -12,6 +12,8 @@ struct WatchChoice: Equatable {
     let kind: WatchKind
     let isLive: Bool
     var channelID: String? = nil
+    var streamTitle: String? = nil
+    var gameTitle: String? = nil
 }
 
 struct WatchStream: Equatable {
@@ -24,7 +26,7 @@ func preferredLiveStream(_ streams: [WatchStream]) -> WatchStream? {
         $0.title.localizedCaseInsensitiveContains("4K") ||
         $0.title.localizedCaseInsensitiveContains("UHD")
     }
-    return ultraHD.count == 1 ? ultraHD[0] : streams.first
+    return ultraHD.count == 1 ? ultraHD[0] : (streams.count == 1 ? streams[0] : nil)
 }
 
 func isPrimaryRedSoxTitle(_ title: String) -> Bool {
@@ -38,12 +40,14 @@ func isFullGameReplay(title: String) -> Bool {
     return lower.contains("replay") && !lower.contains("highlight")
 }
 
-func automaticChoice(from choices: [WatchChoice]) -> WatchChoice? {
+func automaticChoice(from choices: [WatchChoice], forceChooser: Bool = false) -> WatchChoice? {
+    guard !forceChooser else { return nil }
     let liveRedSox = choices.filter {
         $0.kind == .liveEvent && $0.isLive && isPrimaryRedSoxTitle($0.title)
     }
     let ultraHD = liveRedSox.filter {
-        $0.title.localizedCaseInsensitiveContains("4K") || $0.title.localizedCaseInsensitiveContains("UHD")
+        ($0.streamTitle ?? $0.title).localizedCaseInsensitiveContains("4K") ||
+        ($0.streamTitle ?? $0.title).localizedCaseInsensitiveContains("UHD")
     }
     if ultraHD.count == 1 { return ultraHD[0] }
     if liveRedSox.count == 1 { return liveRedSox[0] }
