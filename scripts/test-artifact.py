@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Offline packaging tests; create a tiny signed fixture, never launch it."""
+"""Offline packaging tests; only a harmless pause fixture is ever executed."""
 import hashlib
 import importlib.util
 import json
 import plistlib
+import os
+import shutil
+import time
 from pathlib import Path
 import subprocess
 import tempfile
@@ -148,6 +151,93 @@ class ArtifactTests(unittest.TestCase):
         p.write_text(json.dumps(m))
         with self.assertRaisesRegex(ValueError, 'architecture'):
             self.checker.load_metadata(p)
+
+
+class RunningTargetTests(unittest.TestCase):
+    """Run only a harmless pause fixture, never the player or another viewer."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='nesn-guard-', dir=ROOT / 'build')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        (self.root / 'scripts').mkdir()
+        shutil.copy2(ROOT / 'scripts/build-app.sh', self.root / 'scripts/build-app.sh')
+        self.binary = self.root / 'dist/NESN Player.app/Contents/MacOS/NESNPlayer'
+        self.binary.parent.mkdir(parents=True)
+        subprocess.run(['xcrun', 'clang', '-x', 'c', '-', '-o', str(self.binary)],
+                       input=b'#include <unistd.h>\nint main(void) { write(1,"R",1); for (;;) pause(); }\n',
+                       check=True, capture_output=True)
+        self.marker = self.root / 'build-attempted'
+        tools = self.root / 'tools'
+        tools.mkdir()
+        swift = tools / 'swift'
+        swift.write_text('#!/bin/sh\ntouch "$PWD/build-attempted"\nexit 73\n')
+        swift.chmod(0o755)
+        self.env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'])
+
+    def start_fixture(self, binary, *args):
+        child = subprocess.Popen([str(binary), *args], stdout=subprocess.PIPE)
+        assert child.stdout is not None
+        stdout = child.stdout
+        def cleanup():
+            if child.poll() is None:
+                child.terminate()  # Only the exact process handle created by this test.
+            child.wait(timeout=5)
+            stdout.close()
+        self.addCleanup(cleanup)
+        self.assertEqual(stdout.read(1), b'R')
+        return child
+
+    def package(self):
+        return subprocess.run(['/bin/zsh', str(self.root / 'scripts/build-app.sh')],
+                              env=self.env, capture_output=True, text=True, timeout=20)
+
+    def test_running_exact_target_refuses_before_build(self):
+        before = self.binary.read_bytes()
+        child = self.start_fixture(self.binary)
+        result = self.package()
+        self.assertIn('Refusing to replace running target', result.stderr)
+        self.assertIn(str(child.pid), result.stderr)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.marker.exists(), 'build must not start while target runs')
+        self.assertEqual(self.binary.read_bytes(), before)
+        self.assertIsNone(child.poll(), 'guard must not stop the running process')
+
+    def test_target_started_during_build_refuses_before_delete(self):
+        swift = self.root / 'tools/swift'
+        swift.write_text('#!/bin/sh\ntouch "$PWD/build-attempted"\n'
+                         'while [ ! -f "$PWD/continue" ]; do sleep 0.02; done\n'
+                         'printf "%s\\n" "$PWD/bin"\n')
+        package = subprocess.Popen(['/bin/zsh', str(self.root / 'scripts/build-app.sh')],
+                                   env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True)
+        def cleanup():
+            if package.poll() is None:
+                package.terminate()
+            package.communicate(timeout=5)
+        self.addCleanup(cleanup)
+        deadline = time.monotonic() + 10
+        while not self.marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(self.marker.exists())
+        before = self.binary.read_bytes()
+        child = self.start_fixture(self.binary)
+        (self.root / 'continue').touch()
+        _, stderr = package.communicate(timeout=20)
+        self.assertIn('Refusing to replace running target', stderr)
+        self.assertIn(str(child.pid), stderr)
+        self.assertEqual(self.binary.read_bytes(), before)
+        self.assertIsNone(child.poll())
+
+    def test_other_path_same_name_and_target_argument_do_not_block(self):
+        other = self.root / 'other/NESNPlayer'
+        other.parent.mkdir()
+        shutil.copy2(self.binary, other)
+        child = self.start_fixture(other, str(self.binary))
+        result = self.package()
+        self.assertEqual(result.returncode, 73, result.stderr)
+        self.assertTrue(self.marker.exists())
+        self.assertIsNone(child.poll())
 
 
 if __name__ == '__main__':

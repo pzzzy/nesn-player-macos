@@ -6,12 +6,43 @@ if [[ "$(uname -m)" != arm64 ]]; then
   print -u2 'Packaging requires an Apple-silicon Mac (arm64).'
   exit 1
 fi
+APP="$ROOT/dist/NESN Player.app"
+# Read the kernel executable path, not argv/pgrep (names and arguments can lie).
+# Check again after compilation in case the target was started during the build.
+refuse_running_target() {
+  python3 - "$APP/Contents/MacOS/NESNPlayer" <<'PY'
+import ctypes
+import os
+import subprocess
+import sys
+
+libproc = ctypes.CDLL('/usr/lib/libproc.dylib', use_errno=True)
+libproc.proc_pidpath.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+libproc.proc_pidpath.restype = ctypes.c_int
+target = os.path.realpath(sys.argv[1])
+pids = subprocess.run(['/bin/ps', '-axo', 'pid='], check=True,
+                      capture_output=True, text=True).stdout.split()
+running = []
+for value in pids:
+    pid = int(value)
+    path = ctypes.create_string_buffer(4096)
+    # Exited/inaccessible processes may have no readable executable path.
+    if libproc.proc_pidpath(pid, path, len(path)) > 0:
+        if os.path.realpath(os.fsdecode(path.value)) == target:
+            running.append(pid)
+if running:
+    print(f'Refusing to replace running target: {target} (PID(s): '
+          + ', '.join(map(str, running)) + '). Quit it manually first.', file=sys.stderr)
+    sys.exit(1)
+PY
+}
+refuse_running_target
 # No installation or launch: all products remain inside this checkout.
 # An explicit triple prevents a newer host OS from raising the deployment floor.
 export MACOSX_DEPLOYMENT_TARGET=14.0
 nice -n 10 swift build -c release --jobs 2 --triple arm64-apple-macosx14.0
 BIN_DIR=$(swift build -c release --jobs 2 --triple arm64-apple-macosx14.0 --show-bin-path)
-APP="$ROOT/dist/NESN Player.app"
+refuse_running_target
 rm -rf "$APP" "$ROOT/build/AppIcon.iconset"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$ROOT/build/AppIcon.iconset"
 cp "$BIN_DIR/NESNPlayer" "$APP/Contents/MacOS/NESNPlayer"
