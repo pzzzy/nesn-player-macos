@@ -77,6 +77,7 @@ private final class Worker: @unchecked Sendable {
     private struct Ownership {
         let device: UInt32
         let original: Double
+        var acquisitionConfirmed = false
     }
     private let queue = DispatchQueue(label: "NESNPlayer.audio-rate-lease", qos: .utility)
     private let adapter: any AudioRateDeviceAdapter
@@ -160,7 +161,9 @@ private final class Worker: @unchecked Sendable {
             confirm(preferred, device: device, remaining: attempts,
                     cancelled: { !self.valid(generation, token) }) { result in
                 switch result {
-                case .success: completion(result)
+                case .success:
+                    self.ownership?.acquisitionConfirmed = true
+                    completion(result)
                 case .failure: self.release { _ in completion(result) }
                 }
             }
@@ -171,6 +174,9 @@ private final class Worker: @unchecked Sendable {
         }
     }
     private func release(completion: @escaping Completion) {
+        release(remaining: attempts, completion: completion)
+    }
+    private func release(remaining: Int, completion: @escaping Completion) {
         guard let state = ownership else { completion(.success(())); return }
         let current: Double
         do { current = try adapter.rate(state.device) }
@@ -179,7 +185,19 @@ private final class Worker: @unchecked Sendable {
             // numeric ID, which CoreAudio may later recycle for another device.
             ownership = nil; completion(.failure(error)); return
         }
+        if equal(current, state.original), !state.acquisitionConfirmed, remaining > 1 {
+            // An accepted (or throwing) setter may still be pending after a
+            // timeout/cancellation. Seeing the original once is not rollback.
+            // Keep this transaction serialized for one full confirmation window.
+            queue.asyncAfter(deadline: .now() + .nanoseconds(Int(min(delay, UInt64(Int.max))))) {
+                self.release(remaining: remaining - 1, completion: completion)
+            }
+            return
+        }
         guard equal(current, preferred), !equal(current, state.original) else {
+            // A third rate is a user/device change, never ours to overwrite.
+            // A stable original is only bounded evidence of quiescence: CoreAudio
+            // supplies no fence/cancel API for a write delayed beyond this window.
             ownership = nil; completion(.success(())); return
         }
         do {
