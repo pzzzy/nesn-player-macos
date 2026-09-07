@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run unchanged XCTest fixtures on CLT using a temporary assertion adapter."""
 import pathlib
+import platform
 import re
 import subprocess
 import sys
@@ -36,10 +37,16 @@ sources = [str(p) for p in sources if p.name != "main.swift"]
 if name == "PlaybackLifecycleTests":
     # Include declarations only; the application launch block is never compiled.
     entry = (root / "Sources" / "NESNPlayer" / "main.swift").read_text()
-    assert '\ndo {\n' in entry, 'Entry-point boundary changed; review offline adapter'
+    # Use the explicit boundary before the entire no-start guard, not a nested do.
+    marker = '// XCTest imports do not execute this entry point. Explicit finite no-start mode.\n'
+    if entry.count('\n' + marker) != 1:
+        raise RuntimeError('Entry-point boundary changed; review offline adapter')
+    prefix, startup = entry.split('\n' + marker, 1)
+    if not startup.startswith('if !CommandLine.arguments.contains("--no-start") {\n'):
+        raise RuntimeError('Entry-point guard changed; review offline adapter')
     declarations = build / "AppDeclarations.swift"
-    declarations.write_text(entry.split('\ndo {\n', 1)[0])
+    declarations.write_text(prefix + '\n')
     sources.append(str(declarations))
-command = ["nice", "-n", "10", "xcrun", "swiftc", "-parse-as-library", "-D", "AUDIO_LEASE_STANDALONE", *sources, str(fixture), "-o", str(build / "runner")]
+command = ["nice", "-n", "10", "xcrun", "swiftc", "-swift-version", "6", "-target", platform.machine() + "-apple-macosx14.0", "-parse-as-library", "-D", "AUDIO_LEASE_STANDALONE", *sources, str(fixture), "-o", str(build / "runner")]
 subprocess.run(command, check=True)
 subprocess.run([str(build / "runner")], check=True)
