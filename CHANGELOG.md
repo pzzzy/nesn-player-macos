@@ -8,9 +8,12 @@ All notable user-facing changes are documented here.
 - Added archive, SHA-256, ad-hoc signature, version and platform gates plus offline corruption regression tests.
 - Added read-only, bounded CI packaging and privacy-aware contribution/reporting forms.
 - Clarified installation, checksum trust and manual release requirements.
-- Still screenshot work is capability-gated: original-resolution/HDR support requires separate evidence; no FairPlay bypass, recording or video export.
+- Added **Capture frame** / **S** for native, capability-gated still capture at original decoded resolution. High-precision frames use TIFF; clear HLS HDR current-frame capture supports 16-bit PQ TIFF without display tone mapping.
+- Validated clear-HLS HDR capture with a local calibrated fixture, including serialized TIFF pixels decoded back from disk. Actual NESN live screenshots are not yet verified; protected or unsupported sources/routes remain unavailable, and paused capture may time out. No FairPlay bypass, recording or video export.
+- Added **Browse sources** and retry paths, Pause while buffering, responsive controls and asynchronous audio-rate restoration as candidate features.
+- Candidate packaging uses `1.6.0-dev`, build `9`, with numeric bundle short version (`CFBundleShortVersionString`) `1.6.0`. Documented the CLT offline fallback alongside full-Xcode tests.
 
-This is not a published or live-playback-certified release. UHD/AirPlay/audio-route and HDR capture acceptance remain separate manual gates. Historical verification below applies only to the version named.
+v1.5.0 remains the published release. This candidate is not live-playback-certified or proven non-regressing. UHD/AirPlay/audio-route and actual NESN live capture acceptance remain separate manual gates. Historical verification below applies only to the version named.
 
 ## 1.5.0 — 2026-08-24
 

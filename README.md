@@ -4,7 +4,7 @@ Independent native AVFoundation player for **current NESN subscribers** on **App
 
 **[Download the latest published release](https://github.com/pzzzy/nesn-player-macos/releases/latest)** · [Changelog](CHANGELOG.md)
 
-This source tree is **1.6.0-dev, build 9: an unreleased candidate**, not the latest published release. Candidate playback, AirPlay, audio restoration and HDR capture require separate acceptance checks.
+This source tree is **1.6.0-dev, build 9: an unreleased candidate**. **v1.5.0 remains the published release**; its verification does not certify this candidate. Live playback, AirPlay, audio restoration and actual NESN live screenshots still need separate acceptance checks.
 
 ## Install a published build
 
@@ -25,11 +25,14 @@ There is no automatic updater. Install updates manually from releases, or build 
 - Native AVFoundation/FairPlay playback, freely resizable windows and macOS fullscreen (green button / Control-Command-F).
 - Automatic selection is reserved for an unambiguous primary live Red Sox source, with dedicated UHD preference. Otherwise choose explicitly from live, linear and replay sources.
 - Quality is uncapped; selected resolution depends on entitlement, the provider, network, display and AVFoundation. A UHD event can be separate from the ordinary HD source.
-- Move the pointer over the video for controls. Scroll vertically for volume; live wheel events never scrub.
+- Move the pointer over the video for controls. Candidate controls adapt to smaller windows; **Browse sources** reopens source selection, with retry available after failures. **Pause** remains available while playback is buffering. Scroll vertically for volume; live wheel events never scrub.
 - **Replay 30 seconds** stays within the available live seekable window; **GO LIVE** returns to the edge. VOD has a seek bar.
 - Use the native AirPlay button for Apple TV selection or return to local playback. Route/provider restrictions can still prevent playback.
-- Dedicated live UHD may temporarily align local audio output to 48 kHz to address clock drift. Normal cleanup attempts to restore the prior rate without overwriting newer user changes; force-kill/crash restoration is not guaranteed.
-- Personal still screenshots are candidate, capability-gated work: only frames AVFoundation permits, with original-resolution/HDR claims contingent on verified file properties. Protected content must be rejected rather than bypassed. No recording, restreaming or video export.
+- Dedicated live UHD may temporarily align local audio output to 48 kHz to address clock drift. Candidate cleanup restores the prior rate asynchronously without intentionally overwriting newer user changes; route and long-session acceptance are still pending. Force-kill/crash restoration is not guaranteed.
+- **Capture frame** (or **S**) saves a personal still through native AVFoundation APIs, at the original decoded frame resolution rather than the window size. High-precision/HDR frames use TIFF; ordinary SDR frames may use PNG. The clear-HLS current-frame path preserves PQ HDR in 16-bit TIFF without display tone mapping.
+- Capture is capability-gated: not all sources or output routes expose a frame. FairPlay/protected content is rejected, never bypassed. A paused stream may time out waiting for a decoded frame; resume playback and retry. No recording, restreaming or video export.
+
+Clear-HLS HDR capture has been validated with a local calibrated fixture, including pixels decoded from the saved TIFF, not just metadata. **An actual NESN live screenshot has not yet been verified.** This does not establish capture support for every stream, HDR format or output route.
 
 ## Troubleshooting
 
@@ -40,7 +43,7 @@ There is no automatic updater. Install updates manually from releases, or build 
 | Catalog/provider error | Check the official app; retry later or choose another available source. |
 | Network failure | Check connectivity; retry without posting request URLs. |
 | DRM or AirPlay failure | Try authorized local playback; check route/provider support and report only a safe error code/category. |
-| Black protected screenshot | This can be expected DRM behavior, not missing screen-recording permission. |
+| Capture unavailable or timed out | Protected sources/output routes may forbid capture. For a paused clear stream, resume and retry; do not bypass protection or grant screen-recording access as a workaround. |
 
 Advertised master capabilities are not proof of the active rendition. AVPlayer's indicated bitrate describes the selected rendition; observed bitrate is delivery throughput. Review/redact diagnostics before sharing; never upload raw network captures or official-app caches.
 
@@ -55,9 +58,11 @@ cd nesn-player-macos
 python3 scripts/verify-artifact.py
 ```
 
+Candidate metadata identifies `1.6.0-dev`, build `9`; the numeric bundle short version (`CFBundleShortVersionString`) is `1.6.0`. This is not a release promotion.
+
 The script uses two release-build jobs, the committed icon PNG, explicit arm64/macOS 14 metadata and `release.json` as its version source. It includes LICENSE and verifies signature, metadata, architecture, deployment floor, archive contents and SHA-256. Outputs stay in `dist/`; **nothing is installed or launched**. Open `dist/NESN Player.app` manually when ready. Pillow is optional for icon regeneration only.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for offline tests and manual release gates; [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+For offline tests with Command Line Tools only, run `./Tests/run-tests.sh`. With full Xcode selected, run `nice -n 10 swift test --jobs 2`. See [CONTRIBUTING.md](CONTRIBUTING.md) for test scope and manual release gates; [SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
 ## Privacy, legal and license
 
