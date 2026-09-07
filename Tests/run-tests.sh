@@ -24,6 +24,7 @@ nice -n 10 xcrun swiftc "${SWIFT_FLAGS[@]}" \
 "$BUILD/PlaybackModelTests"
 python3 "$ROOT/Tests/run-offline-fixture.py" AudioLeaseTests
 python3 "$ROOT/Tests/run-offline-fixture.py" PlaybackLifecycleTests
+python3 "$ROOT/Tests/run-offline-fixture.py" AppIntegrationTests
 nice -n 10 xcrun swiftc "${SWIFT_FLAGS[@]}" -parse-as-library -D FRAME_CAPTURE_STANDALONE \
   "$ROOT/Sources/NESNPlayer/FrameCapture.swift" \
   "$ROOT/Tests/NESNPlayerTests/FrameCaptureTests.swift" \
