@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Offline packaging tests; create a tiny signed fixture, never launch it."""
+import hashlib
+import importlib.util
+import json
+import plistlib
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+import zipfile
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class ArtifactTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = ROOT / 'scripts/verify-artifact.py'
+        if not path.exists():
+            return
+        spec = importlib.util.spec_from_file_location('artifact', path)
+        assert spec is not None and spec.loader is not None
+        cls.checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.checker)
+
+    def setUp(self):
+        self.assertTrue((ROOT / 'scripts/verify-artifact.py').exists(), 'artifact verifier not implemented')
+        self.temp = tempfile.TemporaryDirectory(prefix='nesn-artifact-', dir=ROOT / 'build')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.meta = self.checker.load_metadata(ROOT / 'release.json')
+        self.app = self.root / 'NESN Player.app'
+        (self.app / 'Contents/MacOS').mkdir(parents=True)
+        (self.app / 'Contents/Resources').mkdir()
+        (self.app / 'Contents/Info.plist').write_bytes(plistlib.dumps(self.checker.bundle_info(self.meta)))
+        (self.app / 'Contents/Resources/LICENSE').write_bytes((ROOT / 'LICENSE').read_bytes())
+        subprocess.run(['xcrun', 'clang', '-arch', 'arm64', '-mmacosx-version-min=14.0', '-x', 'c', '-', '-o', str(self.app / 'Contents/MacOS/NESNPlayer')], input=b'int main(void) { return 0; }\n', check=True, capture_output=True)
+        self.sign()
+        self.archive()
+
+    def sign(self):
+        subprocess.run(['codesign', '--force', '--sign', '-', str(self.app)], check=True, capture_output=True)
+
+    def archive(self):
+        self.zip = self.root / self.checker.archive_name(self.meta)
+        with zipfile.ZipFile(self.zip, 'w', zipfile.ZIP_DEFLATED) as z:
+            for p in sorted(self.app.rglob('*')):
+                if p.is_file():
+                    z.write(p, p.relative_to(self.root))
+        self.hash = self.zip.with_suffix('.zip.sha256')
+        self.hash.write_text(hashlib.sha256(self.zip.read_bytes()).hexdigest() + '  ' + self.zip.name + '\n')
+
+    def verify(self):
+        self.checker.verify(self.root, ROOT / 'release.json', ROOT / 'LICENSE')
+
+    def test_valid_signed_archive(self):
+        self.verify()
+
+    def test_wrong_hash(self):
+        self.hash.write_text('0' * 64 + '  ' + self.zip.name + '\n')
+        with self.assertRaisesRegex(ValueError, 'checksum'):
+            self.verify()
+
+    def test_missing_license(self):
+        (self.app / 'Contents/Resources/LICENSE').unlink()
+        self.sign()
+        self.archive()
+        with self.assertRaisesRegex(ValueError, 'LICENSE'):
+            self.verify()
+
+    def test_wrong_version(self):
+        p = self.app / 'Contents/Info.plist'
+        info = plistlib.loads(p.read_bytes())
+        info['CFBundleVersion'] = '8'
+        p.write_bytes(plistlib.dumps(info))
+        self.sign()
+        self.archive()
+        with self.assertRaisesRegex(ValueError, 'CFBundleVersion'):
+            self.verify()
+
+    def test_invalid_signature(self):
+        (self.app / 'Contents/MacOS/NESNPlayer').write_bytes(b'not executable')
+        self.archive()
+        with self.assertRaisesRegex(ValueError, 'codesign'):
+            self.verify()
+
+    def test_archive_does_not_match_bundle(self):
+        (self.app / 'Contents/Resources/extra.txt').write_text('changed')
+        self.sign()
+        with self.assertRaisesRegex(ValueError, 'differ'):
+            self.verify()
+
+    def test_path_traversal(self):
+        with zipfile.ZipFile(self.zip, 'a') as z:
+            z.writestr('../escape', 'no')
+        self.hash.write_text(hashlib.sha256(self.zip.read_bytes()).hexdigest() + '  ' + self.zip.name + '\n')
+        with self.assertRaisesRegex(ValueError, 'unsafe'):
+            self.verify()
+
+    def test_wrong_binary_architecture(self):
+        binary = self.app / 'Contents/MacOS/NESNPlayer'
+        subprocess.run(['xcrun', 'clang', '-arch', 'x86_64', '-mmacosx-version-min=14.0', '-x', 'c', '-', '-o', str(binary)], input=b'int main(void) { return 0; }\n', check=True, capture_output=True)
+        self.sign()
+        self.archive()
+        with self.assertRaisesRegex(ValueError, 'architecture'):
+            self.verify()
+
+    def test_newer_binary_deployment_floor(self):
+        binary = self.app / 'Contents/MacOS/NESNPlayer'
+        subprocess.run(['xcrun', 'clang', '-arch', 'arm64', '-mmacosx-version-min=15.0', '-x', 'c', '-', '-o', str(binary)], input=b'int main(void) { return 0; }\n', check=True, capture_output=True)
+        self.sign()
+        self.archive()
+        with self.assertRaisesRegex(ValueError, 'deployment target'):
+            self.verify()
+
+    def test_wrong_plist_deployment_floor(self):
+        p = self.app / 'Contents/Info.plist'
+        info = plistlib.loads(p.read_bytes())
+        info['LSMinimumSystemVersion'] = '15.0'
+        p.write_bytes(plistlib.dumps(info))
+        self.sign()
+        self.archive()
+        with self.assertRaisesRegex(ValueError, 'LSMinimumSystemVersion'):
+            self.verify()
+
+    def test_symlink_archive_entry(self):
+        entry = zipfile.ZipInfo('NESN Player.app/Contents/link')
+        entry.create_system = 3
+        entry.external_attr = 0o120777 << 16
+        with zipfile.ZipFile(self.zip, 'a') as z:
+            z.writestr(entry, '/tmp/escape')
+        self.hash.write_text(hashlib.sha256(self.zip.read_bytes()).hexdigest() + '  ' + self.zip.name + '\n')
+        with self.assertRaisesRegex(ValueError, 'unsafe'):
+            self.verify()
+
+    def test_tag_consistency(self):
+        script = str(ROOT / 'scripts/verify-artifact.py')
+        good = subprocess.run(['python3', script, '--check-tag', 'v' + self.meta['version']], capture_output=True)
+        bad = subprocess.run(['python3', script, '--check-tag', 'v0.0.0'], capture_output=True)
+        self.assertEqual(good.returncode, 0)
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn(b'tag does not match', bad.stderr)
+
+    def test_invalid_metadata(self):
+        p = self.root / 'bad.json'
+        m = dict(self.meta, architecture='x86_64')
+        p.write_text(json.dumps(m))
+        with self.assertRaisesRegex(ValueError, 'architecture'):
+            self.checker.load_metadata(p)
+
+
+if __name__ == '__main__':
+    (ROOT / 'build').mkdir(exist_ok=True)
+    unittest.main(verbosity=2)

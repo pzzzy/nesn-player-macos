@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest a native playback improvement.
+body:
+  - type: markdown
+    attributes:
+      value: "Keep requests subscription-respecting and native. No DRM bypass, credential export, recording, restreaming or video export. Do not include account data, signed URLs or DRM material."
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: How could this be tested offline or safely?

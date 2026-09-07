@@ -1,45 +1,29 @@
 # Contributing
 
-Thanks for helping improve NESN Player.
+## Build and validate
 
-## Development requirements
+Use an Apple-silicon Mac, macOS 14+, Xcode Command Line Tools with Swift 6+, and Python 3. CI uses the macOS 15 arm64 runner and reports its toolchain; the binary deployment floor remains macOS 14. Offline tests need no subscriber account.
 
-- macOS 14 or later
-- Xcode Command Line Tools with Swift
-- The official NESN 360 app, signed in with an authorized account, for live integration testing
-
-## Build and test
-
-```bash
-swift build -c release
-./Tests/run-tests.sh
-./scripts/build-app.sh
-codesign --verify --deep --strict "dist/NESN Player.app"
+```sh
+nice -n 10 swift test --jobs 2
+python3 scripts/test-artifact.py
 ./scripts/verify-source.sh
+./scripts/build-app.sh
+python3 scripts/verify-artifact.py
 ```
 
-The packaged app is written to `dist/NESN Player.app`. Build products and release archives under `build/`, `dist/`, and `.build/` are intentionally ignored by Git.
+Packaging builds release code with two jobs, generates an icon from the committed PNG, includes LICENSE, ad-hoc signs, creates ZIP/SHA-256 files and verifies both the bundle and extracted archive. It never installs or launches the app. Pillow is needed only for optional `scripts/generate-icon.py`, not normal builds. `Tests/run-tests.sh` remains the compatibility test entry point.
+
+`release.json` is the only packaging version/build/platform source. Candidate versions retain a `-dev` suffix; tags must equal `v` plus that version. CI artifacts are test candidates, not published releases. There is no updater framework. Release promotion is manual and requires reviewing test evidence, signature, checksum and changelog; keep the previous download available for rollback.
 
 ## Pull requests
 
-1. Create a focused branch from `main`.
-2. Keep changes small and use a conventional commit message.
-3. Add or update tests for behavior changes.
-4. Update `README.md` and `CHANGELOG.md` for user-facing changes.
-5. Run the complete validation commands above before opening a pull request.
+Keep patches focused, add a failing regression test first, and report actual commands/results plus pending checks. Update user-facing documentation. Be respectful: critique changes rather than people; harassment and publication of personal information are not acceptable.
 
-## Security and privacy
+Do not attach or commit authorization/license tokens, signed playback URLs, SPC/CKC bodies, device/account identifiers, official-app caches or network captures. Use synthetic fixtures and allowlisted diagnostics. Follow [SECURITY.md](SECURITY.md) for private reports.
 
-Never commit or include in logs:
+Preserve native AVFoundation/FairPlay playback and legitimate entitlement. Personal still screenshots may be supported only where AVFoundation permits; retain capability checks and validate original pixel dimensions/HDR properties before claiming HDR support. No DRM bypass, credential export, recording, restreaming or video export.
 
-- authorization, subscription, or license tokens;
-- complete signed playback URLs;
-- FairPlay SPC or CKC data;
-- device identifiers;
-- official-app caches or account data.
+## Manual release gates
 
-Use the official app's existing local session only at runtime. Do not add DRM-circumvention, credential-export, video-capture, or recording functionality. Please report vulnerabilities according to [SECURITY.md](SECURITY.md), not in a public issue.
-
-## Scope and legal note
-
-This project is an independent client and is not affiliated with or endorsed by NESN. Contributors are responsible for using it only with content they are authorized to access and for respecting applicable terms and rights.
+With an authorized account and explicit permission, separately verify UHD/HD selection, ambiguous chooser, denial/expired session, replay/GO LIVE, VOD seeking, small/fullscreen controls, accessibility, AirPlay connect/return, sleep/network recovery and long-session UHD A/V drift/audio restoration. Still capture needs separate clear-source resolution/HDR validation and protected-source rejection checks. Offline CI does not establish these. Never disturb someone else's active playback or audio route to test a patch.

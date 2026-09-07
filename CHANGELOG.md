@@ -2,6 +2,16 @@
 
 All notable user-facing changes are documented here.
 
+## 1.6.0-dev (build 9) — Unreleased candidate
+
+- Centralized release metadata; explicit arm64/macOS 14 packaging with bundled MIT license.
+- Added archive, SHA-256, ad-hoc signature, version and platform gates plus offline corruption regression tests.
+- Added read-only, bounded CI packaging and privacy-aware contribution/reporting forms.
+- Clarified installation, checksum trust and manual release requirements.
+- Still screenshot work is capability-gated: original-resolution/HDR support requires separate evidence; no FairPlay bypass, recording or video export.
+
+This is not a published or live-playback-certified release. UHD/AirPlay/audio-route and HDR capture acceptance remain separate manual gates. Historical verification below applies only to the version named.
+
 ## 1.5.0 — 2026-08-24
 
 ### Added
