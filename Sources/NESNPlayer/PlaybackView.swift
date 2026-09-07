@@ -2,321 +2,318 @@ import AppKit
 import AVFoundation
 import AVKit
 
-@MainActor
-final class ActionButton: NSButton {
+@MainActor final class ActionButton: NSButton {
     var actionHandler: (() -> Void)?
-
     init(title: String, symbolName: String? = nil, handler: @escaping () -> Void) {
-        self.actionHandler = handler
+        actionHandler = handler
         super.init(frame: .zero)
+        bezelStyle = .texturedRounded; isBordered = false; contentTintColor = .white
+        font = .systemFont(ofSize: 14, weight: .semibold)
         self.title = title
-        self.bezelStyle = .texturedRounded
-        self.isBordered = false
-        self.contentTintColor = .white
-        self.font = .systemFont(ofSize: 14, weight: .semibold)
         if let symbolName {
-            self.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
-            self.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
+            image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
+            imagePosition = .imageOnly
         }
-        self.target = self
-        self.action = #selector(invoke)
-        self.toolTip = title
-        self.setAccessibilityLabel(title)
+        target = self; action = #selector(invoke)
+        toolTip = title; setAccessibilityLabel(title)
     }
-
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
     @objc private func invoke() { actionHandler?() }
 }
 
-@MainActor
-final class ScrollPlayerView: AVPlayerView {
-    var scrollHandler: ((CGFloat) -> Void)?
-
-    override func scrollWheel(with event: NSEvent) {
-        guard abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX), event.scrollingDeltaY != 0 else { return }
-        scrollHandler?(event.scrollingDeltaY)
+@MainActor final class PlaybackScrubber: NSSlider {
+    var beginDrag: (() -> Void)?
+    var endDrag: (() -> Void)?
+    private(set) var dragging = false
+    override func mouseDown(with event: NSEvent) {
+        dragging = true; beginDrag?()
+        super.mouseDown(with: event)
+        dragging = false; endDrag?()
     }
 }
 
-@MainActor
-final class PlaybackView: NSView {
+@MainActor final class PlaybackView: NSView, @preconcurrency AVRoutePickerViewDelegate {
     let player: AVPlayer
     let isLiveContent: Bool
-    private let videoView = ScrollPlayerView()
+    private let videoView = AVPlayerView()
     private let controls = NSVisualEffectView()
     private let volumeLabel = NSTextField(labelWithString: "100%")
-    private let liveLight = NSView()
     private let liveButton = ActionButton(title: "LIVE", handler: {})
-    private let playButton = ActionButton(title: "Pause", symbolName: "pause.fill", handler: {})
+    private let playButton = ActionButton(title: "Play", symbolName: "play.fill", handler: {})
     private let routePicker = AVRoutePickerView()
-    private let scrubber = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private let scrubber = PlaybackScrubber(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
     private let timeLabel = NSTextField(labelWithString: "0:00 / 0:00")
+    private let statusLabel = NSTextField(labelWithString: "Loading")
     private var timeObserver: Any?
     private var trackingAreaRef: NSTrackingArea?
     private var hideWorkItem: DispatchWorkItem?
-    private var scrollMonitor: Any?
+    private var eventMonitor: Any?
+    private var observations: [NSKeyValueObservation] = []
+    private var notifications: [NSObjectProtocol] = []
+    private var intent = PlaybackIntent()
+    private var scrub = ScrubSession()
+    private var routePickerActive = false
+    private(set) var isDisposed = false
+    var onFailure: ((Error) -> Void)?
+    /// Explicit source-scoped capture integration; never a desktop screenshot.
+    var onCaptureFrame: (() -> Void)?
+    var onChooseSource: (() -> Void)?
+    var activeObserverCount: Int { observations.count + notifications.count + (timeObserver == nil ? 0 : 1) + (eventMonitor == nil ? 0 : 1) }
 
     init(frame: NSRect, player: AVPlayer, isLiveContent: Bool) {
-        self.player = player
-        self.isLiveContent = isLiveContent
+        self.player = player; self.isLiveContent = isLiveContent
         super.init(frame: frame)
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.black.cgColor
-        setupVideo()
-        setupControls()
-        monitorPlayback()
-        monitorScrolling()
+        wantsLayer = true; layer?.backgroundColor = NSColor.black.cgColor
+        setupControls(); monitorPlayback(); monitorEvents()
     }
-
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private func setupVideo() {
-        videoView.translatesAutoresizingMaskIntoConstraints = false
-        videoView.player = player
-        videoView.controlsStyle = .none
-        videoView.videoGravity = .resizeAspect
-        videoView.scrollHandler = { [weak self] deltaY in self?.adjustVolume(deltaY: deltaY) }
-        addSubview(videoView)
-        NSLayoutConstraint.activate([
-            videoView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            videoView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            videoView.topAnchor.constraint(equalTo: topAnchor),
-            videoView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+    /// Call before releasing or replacing the view. Idempotent and main-thread scoped.
+    func dispose() {
+        guard !isDisposed else { return }
+        isDisposed = true
+        hideWorkItem?.cancel(); hideWorkItem = nil; scrub.cancel()
+        if let timeObserver { player.removeTimeObserver(timeObserver) }; timeObserver = nil
+        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }; eventMonitor = nil
+        observations.forEach { $0.invalidate() }; observations.removeAll()
+        notifications.forEach { NotificationCenter.default.removeObserver($0) }; notifications.removeAll()
+        if let trackingAreaRef { removeTrackingArea(trackingAreaRef) }; trackingAreaRef = nil
+        videoView.player = nil; routePicker.player = nil; routePicker.delegate = nil
+        onFailure = nil; onCaptureFrame = nil; onChooseSource = nil
     }
+    func play() { guard !isDisposed else { return }; intent.play(); player.play(); updateState() }
 
     private func setupControls() {
+        videoView.player = player; videoView.controlsStyle = .none; videoView.videoGravity = .resizeAspect
+        videoView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(videoView)
         controls.translatesAutoresizingMaskIntoConstraints = false
-        controls.material = .hudWindow
-        controls.blendingMode = .withinWindow
-        controls.state = .active
-        controls.wantsLayer = true
-        controls.layer?.cornerRadius = 14
-        controls.layer?.masksToBounds = true
+        controls.material = .hudWindow; controls.blendingMode = .withinWindow; controls.state = .active
+        controls.wantsLayer = true; controls.layer?.cornerRadius = 12
         addSubview(controls)
-
-        let volumeIcon = NSImageView(image: NSImage(systemSymbolName: "speaker.wave.2.fill", accessibilityDescription: "Volume")!)
-        volumeIcon.contentTintColor = .white
-        volumeIcon.setContentHuggingPriority(.required, for: .horizontal)
-        volumeLabel.textColor = .white
-        volumeLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        volumeLabel.alignment = .right
-        volumeLabel.toolTip = "Scroll up or down anywhere over the video to change volume"
-
-        let replayButton = ActionButton(title: "Replay 30 seconds", symbolName: "gobackward.30") { [weak self] in
-            self?.replayThirtySeconds()
+        let replay = ActionButton(title: "Replay 30 seconds", symbolName: "gobackward.30") { [weak self] in self?.replayThirtySeconds() }
+        let mute = ActionButton(title: "Mute or unmute", symbolName: "speaker.wave.2.fill") { [weak self] in
+            guard let self else { return }; self.player.isMuted.toggle(); self.updateVolumeLabel(); self.showControls()
         }
-        replayButton.imagePosition = .imageOnly
-        replayButton.toolTip = "Replay 30 seconds"
-
         playButton.actionHandler = { [weak self] in self?.togglePlayback() }
-        playButton.imagePosition = .imageOnly
-
-        routePicker.translatesAutoresizingMaskIntoConstraints = false
-        routePicker.player = player
+        liveButton.actionHandler = { [weak self] in self?.goLive() }
+        routePicker.player = player; routePicker.delegate = self
         routePicker.setRoutePickerButtonColor(.white, for: .normal)
         routePicker.setRoutePickerButtonColor(.systemBlue, for: .active)
-        routePicker.toolTip = "AirPlay to Apple TV"
-        routePicker.setAccessibilityLabel("AirPlay to Apple TV")
-
-        liveLight.translatesAutoresizingMaskIntoConstraints = false
-        liveLight.wantsLayer = true
-        liveLight.layer?.cornerRadius = 5
-        liveButton.actionHandler = { [weak self] in self?.goLive() }
-        liveButton.toolTip = "Return to the live edge"
-
-        let liveStack = NSStackView(views: [liveLight, liveButton])
-        liveStack.orientation = .horizontal
-        liveStack.spacing = 5
-        liveStack.alignment = .centerY
-
-        let transportViews: [NSView] = isLiveContent
-            ? [volumeIcon, volumeLabel, replayButton, playButton, routePicker, liveStack]
-            : [volumeIcon, volumeLabel, replayButton, playButton, routePicker]
-        let transport = NSStackView(views: transportViews)
-        transport.orientation = .horizontal
-        transport.alignment = .centerY
-        transport.spacing = 18
-
-        var controlRows: [NSView] = [transport]
-        if !isLiveContent {
-            scrubber.isContinuous = true
-            scrubber.target = self
-            scrubber.action = #selector(scrubChanged(_:))
-            scrubber.toolTip = "Seek within this replay"
-            scrubber.setAccessibilityLabel("Replay position")
-            timeLabel.textColor = .white
-            timeLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-            timeLabel.alignment = .right
-            timeLabel.setContentHuggingPriority(.required, for: .horizontal)
-            let scrubRow = NSStackView(views: [scrubber, timeLabel])
-            scrubRow.orientation = .horizontal
-            scrubRow.spacing = 10
-            scrubRow.alignment = .centerY
-            scrubber.widthAnchor.constraint(greaterThanOrEqualToConstant: 420).isActive = true
-            controlRows.insert(scrubRow, at: 0)
+        routePicker.toolTip = "AirPlay to Apple TV"; routePicker.setAccessibilityLabel("AirPlay to Apple TV")
+        let transport = NSStackView(views: isLiveContent ? [mute, volumeLabel, replay, playButton, routePicker, liveButton] : [mute, volumeLabel, replay, playButton, routePicker])
+        transport.orientation = .horizontal; transport.alignment = .centerY; transport.spacing = 4
+        for label in [volumeLabel, timeLabel, statusLabel] {
+            label.textColor = .white; label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         }
-        let stack = NSStackView(views: controlRows)
+        let capture = ActionButton(title: "Capture frame", symbolName: "camera") { [weak self] in
+            guard let self, !self.isDisposed else { return }; self.onCaptureFrame?()
+        }
+        let browse = ActionButton(title: "Browse sources", symbolName: "list.bullet") { [weak self] in
+            guard let self, !self.isDisposed else { return }; self.onChooseSource?()
+        }
+        let utilities = NSStackView(views: [browse, statusLabel, capture])
+        utilities.orientation = .horizontal; utilities.alignment = .centerY; utilities.spacing = 8
+        var rows: [NSView] = [transport, utilities]
+        if !isLiveContent {
+            scrubber.isContinuous = true; scrubber.target = self; scrubber.action = #selector(scrubChanged(_:))
+            scrubber.setAccessibilityLabel("Replay position"); scrubber.toolTip = "Seek within this replay"
+            scrubber.beginDrag = { [weak self] in self?.beginScrubbing() }
+            scrubber.endDrag = { [weak self] in self?.finishScrubbing() }
+            rows.insert(timeLabel, at: 0); rows.insert(scrubber, at: 0)
+        }
+        let stack = NSStackView(views: rows)
+        stack.orientation = .vertical; stack.alignment = .centerX; stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
         controls.addSubview(stack)
-
         NSLayoutConstraint.activate([
-            controls.centerXAnchor.constraint(equalTo: centerXAnchor),
-            controls.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -24),
-            controls.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -32),
-            stack.leadingAnchor.constraint(equalTo: controls.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: controls.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: controls.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: controls.bottomAnchor),
-            liveLight.widthAnchor.constraint(equalToConstant: 10),
-            liveLight.heightAnchor.constraint(equalToConstant: 10),
-            volumeLabel.widthAnchor.constraint(equalToConstant: 40),
-            routePicker.widthAnchor.constraint(equalToConstant: 28),
-            routePicker.heightAnchor.constraint(equalToConstant: 28),
+            videoView.leadingAnchor.constraint(equalTo: leadingAnchor), videoView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            videoView.topAnchor.constraint(equalTo: topAnchor), videoView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            controls.centerXAnchor.constraint(equalTo: centerXAnchor), controls.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+            controls.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -24),
+            stack.leadingAnchor.constraint(equalTo: controls.leadingAnchor, constant: 10), stack.trailingAnchor.constraint(equalTo: controls.trailingAnchor, constant: -10),
+            stack.topAnchor.constraint(equalTo: controls.topAnchor, constant: 8), stack.bottomAnchor.constraint(equalTo: controls.bottomAnchor, constant: -8),
+            routePicker.widthAnchor.constraint(equalToConstant: 28), routePicker.heightAnchor.constraint(equalToConstant: 28),
+            volumeLabel.widthAnchor.constraint(equalToConstant: 38)
         ])
-        updateVolumeLabel()
-        showControls()
+        if !isLiveContent {
+            scrubber.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            scrubber.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        }
+        updateVolumeLabel(); showControls()
     }
-
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let trackingAreaRef { removeTrackingArea(trackingAreaRef) }
-        let area = NSTrackingArea(rect: bounds, options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited], owner: self)
-        addTrackingArea(area)
-        trackingAreaRef = area
+        guard !isDisposed else { return }
+        let area = NSTrackingArea(rect: .zero, options: [.activeInKeyWindow, .inVisibleRect, .mouseMoved, .mouseEnteredAndExited], owner: self)
+        addTrackingArea(area); trackingAreaRef = area
     }
-
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); window?.acceptsMouseMovedEvents = true }
     override func mouseMoved(with event: NSEvent) { showControls() }
     override func mouseEntered(with event: NSEvent) { showControls() }
+    override func mouseExited(with event: NSEvent) { showControls() }
 
-    override func scrollWheel(with event: NSEvent) {
-        handleScroll(event)
-    }
-
-    private func monitorScrolling() {
-        // AVPlayerView contains private child views which can consume wheel
-        // events before the outer view sees them. A local event monitor makes
-        // vertical scrolling consistently control volume anywhere in this
-        // player window, while swallowing the event so it can never scrub.
-        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            guard let self, event.window === self.window else { return event }
-            self.handleScroll(event)
-            return nil
+    private func monitorEvents() {
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { [weak self] event in
+            guard let self, !self.isDisposed, let window = self.window,
+                  event.window === window, window.isKeyWindow, window.attachedSheet == nil, !self.routePickerActive else { return event }
+            if event.type == .scrollWheel {
+                if abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX), event.scrollingDeltaY != 0 { self.adjustVolume(deltaY: event.scrollingDeltaY) }
+                return nil // Live scroll must never seek through AVPlayerView's private subviews.
+            }
+            guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+                  !(window.firstResponder is NSTextView), !(window.firstResponder is NSControl) else { return event }
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case " ": self.togglePlayback()
+            case "m": self.player.isMuted.toggle(); self.updateVolumeLabel()
+            case "r": self.replayThirtySeconds()
+            case "l" where self.isLiveContent: self.goLive()
+            case "s" where self.onCaptureFrame != nil: self.onCaptureFrame?()
+            default:
+                if event.keyCode == 126 { self.adjustVolume(deltaY: 1) }
+                else if event.keyCode == 125 { self.adjustVolume(deltaY: -1) }
+                else { return event }
+            }
+            self.showControls(); return nil
         }
     }
-
-    private func handleScroll(_ event: NSEvent) {
-        guard abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX), event.scrollingDeltaY != 0 else { return }
-        adjustVolume(deltaY: event.scrollingDeltaY)
-    }
-
     private func adjustVolume(deltaY: CGFloat) {
         player.volume = adjustedVolume(current: player.volume, scrollingDeltaY: deltaY)
-        updateVolumeLabel()
-        showControls()
+        updateVolumeLabel(); showControls()
     }
-
     private func replayThirtySeconds() {
         guard let item = player.currentItem else { return }
         let current = player.currentTime().seconds
-        let start = item.seekableTimeRanges.first?.timeRangeValue.start.seconds ?? 0
+        let ranges = item.seekableTimeRanges.map(\.timeRangeValue)
+        // Stay in the current DVR segment rather than seeking across an expired gap.
+        let range = ranges.first { CMTimeRangeContainsTime($0, time: player.currentTime()) }
+        let start = range?.start.seconds ?? (isLiveContent ? current : 0)
         guard current.isFinite, start.isFinite else { return }
-        let target = replayTarget(current: current, seekableStart: start)
-        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
-        player.play()
-        updatePlayButton()
-        showControls()
+        player.seek(to: CMTime(seconds: replayTarget(current: current, seekableStart: start), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        play(); showControls()
     }
-
     private func goLive() {
         guard let range = player.currentItem?.seekableTimeRanges.last?.timeRangeValue else { return }
         let end = CMTimeRangeGetEnd(range)
+        guard end.seconds.isFinite else { return }
         player.seek(to: end, toleranceBefore: .zero, toleranceAfter: .zero)
-        player.play()
-        updatePlayButton()
-        showControls()
+        play(); showControls()
     }
-
     private func togglePlayback() {
-        if player.timeControlStatus == .playing { player.pause() } else { player.play() }
-        updatePlayButton()
-        showControls()
+        guard !isDisposed, player.currentItem?.status != .failed else { return }
+        if intent.phase(status: player.timeControlStatus) == .ended {
+            player.seek(to: .zero)
+        }
+        intent.toggle()
+        if intent.wantsPlayback { player.play() } else { player.pause() }
+        updateState(); showControls()
     }
-
     private func monitorPlayback() {
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 10), queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.updateLiveState()
-                self?.updatePlayButton()
-                self?.updateScrubber()
+        observations.append(player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] _, _ in
+            Task { @MainActor in self?.updateState() }
+        })
+        if let item = player.currentItem {
+            observations.append(item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+                Task { @MainActor in
+                    guard let self, !self.isDisposed else { return }
+                    if item.status == .failed { self.fail(item.error) }; self.updateState()
+                }
+            })
+            for name in [Notification.Name.AVPlayerItemDidPlayToEndTime, .AVPlayerItemFailedToPlayToEndTime, .AVPlayerItemPlaybackStalled] {
+                notifications.append(NotificationCenter.default.addObserver(forName: name, object: item, queue: .main) { [weak self] note in
+                    let name = note.name
+                    let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
+                    MainActor.assumeIsolated {
+                        guard let self, !self.isDisposed else { return }
+                        if name == .AVPlayerItemDidPlayToEndTime { self.intent.end() }
+                        if name == .AVPlayerItemFailedToPlayToEndTime { self.fail(error) }
+                        self.updateState(); self.showControls()
+                    }
+                })
             }
         }
-    }
-
-    private func updateLiveState() {
-        guard isLiveContent else { return }
-        let current = player.currentTime().seconds
-        guard let range = player.currentItem?.seekableTimeRanges.last?.timeRangeValue else {
-            liveLight.layer?.backgroundColor = NSColor.systemRed.cgColor
-            liveButton.title = "LIVE"
-            return
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 10), queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateState(); self?.updateScrubber() }
         }
-        let end = CMTimeRangeGetEnd(range).seconds
-        let lag = current.isFinite && end.isFinite ? liveLag(current: current, seekableEnd: end) : .infinity
-        let state = LivePlaybackState(lag: lag)
-        liveLight.layer?.backgroundColor = (state == .live ? NSColor.systemGreen : NSColor.systemRed).cgColor
-        liveButton.title = state == .live ? "LIVE" : "GO LIVE"
     }
-
-    private func updatePlayButton() {
-        let playing = player.timeControlStatus == .playing
-        playButton.image = NSImage(systemSymbolName: playing ? "pause.fill" : "play.fill", accessibilityDescription: playing ? "Pause" : "Play")
-        playButton.toolTip = playing ? "Pause" : "Play"
+    private func fail(_ error: Error?) {
+        guard intent.phase(status: player.timeControlStatus) != .failed else { return }
+        intent.fail(); player.pause(); scrub.cancel(); updateState(); showControls()
+        onFailure?(error ?? NSError(domain: "AVFoundationErrorDomain", code: -1))
     }
-
-    private func updateVolumeLabel() {
-        volumeLabel.stringValue = "\(Int((player.volume * 100).rounded()))%"
+    private func updateState() {
+        guard !isDisposed else { return }
+        let label = intent.actionLabel
+        if playButton.title != label {
+            playButton.title = label; playButton.toolTip = label; playButton.setAccessibilityLabel(label)
+            playButton.image = NSImage(systemSymbolName: intent.wantsPlayback ? "pause.fill" : "play.fill", accessibilityDescription: label)
+        }
+        let phase = intent.phase(status: player.timeControlStatus)
+        playButton.isEnabled = phase != .failed
+        statusLabel.stringValue = phase.rawValue
+        if isLiveContent {
+            var label = "WAITING"
+            if let range = player.currentItem?.seekableTimeRanges.last?.timeRangeValue {
+                let current = player.currentTime().seconds, end = CMTimeRangeGetEnd(range).seconds
+                if current.isFinite, end.isFinite { label = LivePlaybackState(lag: liveLag(current: current, seekableEnd: end)) == .live ? "LIVE" : "GO LIVE" }
+            }
+            liveButton.title = label; liveButton.setAccessibilityLabel(label)
+            liveButton.contentTintColor = label == "LIVE" ? .systemGreen : (label == "GO LIVE" ? .systemRed : .white)
+            liveButton.toolTip = label == "LIVE" ? "At the live edge" : "Return to the live edge"
+        }
     }
-
+    private func updateVolumeLabel() { volumeLabel.stringValue = player.isMuted ? "Muted" : "\(Int((player.volume * 100).rounded()))%" }
+    private func beginScrubbing() {
+        guard !isDisposed, !scrub.isActive else { return }
+        scrub.begin(wasPlaying: intent.wantsPlayback); player.pause(); showControls()
+    }
     @objc private func scrubChanged(_ sender: NSSlider) {
-        guard !isLiveContent else { return }
         let duration = player.currentItem?.duration.seconds ?? 0
+        guard !isLiveContent, duration.isFinite, duration > 0 else { return }
+        beginScrubbing()
         let target = scrubTarget(fraction: sender.doubleValue, duration: duration)
-        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        scrub.update(target: target)
         timeLabel.stringValue = "\(formatTime(target)) / \(formatTime(duration))"
+        if !scrubber.dragging { finishScrubbing() }
         showControls()
     }
-
+    private func finishScrubbing() {
+        guard !isDisposed else { return }
+        let resume = scrub.resumePlayback
+        let target = scrub.finish()
+        if let target {
+            player.currentItem?.cancelPendingSeeks()
+            player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        if resume && intent.wantsPlayback { player.play() }
+        showControls()
+    }
     private func updateScrubber() {
-        guard !isLiveContent else { return }
-        let duration = player.currentItem?.duration.seconds ?? 0
-        let current = player.currentTime().seconds
+        guard !isLiveContent, !scrub.isActive, !isDisposed else { return }
+        let duration = player.currentItem?.duration.seconds ?? 0, current = player.currentTime().seconds
+        scrubber.isEnabled = duration.isFinite && duration > 0
         scrubber.doubleValue = scrubFraction(current: current, duration: duration)
         timeLabel.stringValue = "\(formatTime(current)) / \(formatTime(duration))"
     }
-
     private func formatTime(_ value: Double) -> String {
-        guard value.isFinite, value >= 0 else { return "0:00" }
-        let total = Int(value.rounded(.down))
-        let hours = total / 3600
-        let minutes = (total % 3600) / 60
-        let seconds = total % 60
-        return hours > 0 ? String(format: "%d:%02d:%02d", hours, minutes, seconds) : String(format: "%d:%02d", minutes, seconds)
+        guard value.isFinite, value >= 0, value < Double(Int.max) else { return "–:––" }
+        let total = Int(value.rounded(.down)), hours = Int(value / 3600)
+        return hours > 0 ? String(format: "%d:%02d:%02d", hours, (total % 3600) / 60, total % 60) : String(format: "%d:%02d", total / 60, total % 60)
     }
-
     private func showControls() {
-        hideWorkItem?.cancel()
-        controls.animator().alphaValue = 1
+        guard !isDisposed else { return }
+        hideWorkItem?.cancel(); controls.alphaValue = 1
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.player.timeControlStatus == .playing else { return }
+            guard let self, !self.isDisposed else { return }
+            let point = self.convert(self.window?.mouseLocationOutsideOfEventStream ?? .zero, from: nil)
+            let focused = (self.window?.firstResponder as? NSView).map { $0.isDescendant(of: self.controls) } ?? false
+            guard shouldHidePlaybackControls(playing: self.player.timeControlStatus == .playing, scrubbing: self.scrub.isActive,
+                pointerInControls: self.controls.frame.contains(point), focusedControl: focused, routePickerActive: self.routePickerActive) else { self.showControls(); return }
             self.controls.animator().alphaValue = 0
         }
-        hideWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+        hideWorkItem = work; DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
     }
+    func routePickerViewWillBeginPresentingRoutes(_ routePickerView: AVRoutePickerView) { routePickerActive = true; showControls() }
+    func routePickerViewDidEndPresentingRoutes(_ routePickerView: AVRoutePickerView) { routePickerActive = false; showControls() }
 }
