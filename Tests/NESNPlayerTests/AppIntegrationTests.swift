@@ -2,6 +2,13 @@ import XCTest
 import AppKit
 @testable import NESNPlayer
 
+@MainActor private final class CatalogTestWindow: NSWindow {
+    override func makeKeyAndOrderFront(_ sender: Any?) {}
+    override func close() {
+        delegate?.windowWillClose?(Notification(name: NSWindow.willCloseNotification, object: self))
+    }
+}
+
 final class AppIntegrationTests: XCTestCase {
     func testUltraHDUsesFeedNotProgramTitle() {
         let choice = WatchChoice(id: "fixture", title: "4K promo", kind: .liveEvent, isLive: true, streamTitle: "NESN HD")
@@ -60,6 +67,95 @@ final class AppIntegrationTests: XCTestCase {
         while events.isEmpty { await Task.yield() }
         await routes.shutdown()
         XCTAssertEqual(events, ["begin", "acquired", "released"])
+    }
+
+    @MainActor func testClosingCatalogCancelsLateResultWithOldPlaybackRemaining() async {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.prohibited)
+        let window = CatalogTestWindow()
+        let launcher = WatchLauncher(app: app, window: window)
+        let old = AppDelegate(config: Config(contentID: "offline", title: "Offline", url: "", certificateUrl: "", licenseUrl: "", licenseToken: ""))
+        old.window = CatalogTestWindow()
+        old.stopPlayback()
+        launcher.active = old
+        var continuation: CheckedContinuation<WatchCatalogResult, Never>?
+        var choices = 0
+        var starts = 0
+        launcher.fetchCatalog = { await withCheckedContinuation { continuation = $0 } }
+        launcher.selectItem = { items, _ in choices += 1; return items.first }
+        launcher.beginPlayback = { _ in starts += 1 }
+        launcher.load(forceChooser: true)
+        while continuation == nil { await Task.yield() }
+        let pending = launcher.task
+        window.close()
+        XCTAssertTrue(pending?.isCancelled == true)
+        continuation?.resume(returning: WatchCatalogResult(items: [Self.catalogItem], warnings: []))
+        await pending?.value
+        XCTAssertEqual(choices, 0)
+        XCTAssertEqual(starts, 0)
+        XCTAssertTrue(launcher.active === old)
+    }
+
+    @MainActor func testSuccessfulLoadingCloseDoesNotCancelPlayback() async {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.prohibited)
+        let window = CatalogTestWindow()
+        let launcher = WatchLauncher(app: app, window: window)
+        launcher.fetchCatalog = { WatchCatalogResult(items: [Self.catalogItem], warnings: []) }
+        launcher.selectItem = { items, _ in items.first }
+        var starts = 0
+        launcher.beginPlayback = { delegate in
+            starts += 1
+            delegate.onPlaybackStarted?()
+            XCTAssertFalse(delegate.isStopped)
+            XCTAssertFalse(Task.isCancelled)
+        }
+        launcher.load()
+        await launcher.task?.value
+        XCTAssertEqual(starts, 1)
+        XCTAssertFalse(launcher.isCancelled)
+        XCTAssertFalse(launcher.active?.isStopped ?? true)
+    }
+
+    @MainActor func testRestartIgnoresOldCatalogGeneration() async {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.prohibited)
+        let launcher = WatchLauncher(app: app, window: CatalogTestWindow())
+        var continuation: CheckedContinuation<WatchCatalogResult, Never>?
+        launcher.fetchCatalog = { await withCheckedContinuation { continuation = $0 } }
+        var starts = 0
+        launcher.beginPlayback = { _ in starts += 1 }
+        launcher.load()
+        while continuation == nil { await Task.yield() }
+        let oldTask = launcher.task
+        launcher.cancel()
+        launcher.load(previous: Self.catalogItem)
+        await launcher.task?.value
+        continuation?.resume(returning: WatchCatalogResult(items: [Self.catalogItem], warnings: []))
+        await oldTask?.value
+        XCTAssertEqual(starts, 1)
+        XCTAssertFalse(launcher.isCancelled)
+        launcher.window.close()
+        XCTAssertTrue(launcher.active?.isStopped == true)
+    }
+
+    @MainActor func testCloseDuringSelectionPreventsPlayback() async {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.prohibited)
+        let window = CatalogTestWindow()
+        let launcher = WatchLauncher(app: app, window: window)
+        launcher.fetchCatalog = { WatchCatalogResult(items: [Self.catalogItem], warnings: []) }
+        launcher.selectItem = { items, _ in window.close(); return items.first }
+        var starts = 0
+        launcher.beginPlayback = { _ in starts += 1 }
+        launcher.load()
+        await launcher.task?.value
+        XCTAssertEqual(starts, 0)
+        XCTAssertTrue(launcher.isCancelled)
+    }
+
+    private static var catalogItem: WatchItem {
+        WatchItem(choice: WatchChoice(id: "offline", title: "Offline", kind: .liveEvent, isLive: true), contentID: "offline", channelID: nil)
     }
 
     func testSmokeModeIsExplicitAndWinsOverNoStart() {

@@ -56,10 +56,9 @@ func playbackIsUltraHD(_ choice: WatchChoice) -> Bool {
 }
 
 final class LaunchDelegate: NSObject, NSApplicationDelegate {
-    var startupTask: Task<Void, Never>?
     var onTerminate: (() -> Void)?
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ notification: Notification) { startupTask?.cancel(); onTerminate?() }
+    func applicationWillTerminate(_ notification: Notification) { onTerminate?() }
 }
 
 struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl, licenseToken: String }
@@ -76,6 +75,7 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
     private var cleanupTask: Task<Void, Never>?
     private var terminationPending = false
     var onRecovery: ((Bool) -> Void)?
+    var onPlaybackStarted: (() -> Void)?
     var externalPlaybackObservation: NSKeyValueObservation?
     let session = APISession.make()
     private var startupTask: Task<Void, Never>?
@@ -118,7 +118,7 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
                     throw NSError(domain: "NESNEntitlement", code: 404, userInfo: [NSLocalizedDescriptionKey: "NESN did not return a playable HLS asset."])
                 }
                 startPlayback()
-                launchWindow?.close()
+                if player != nil { onPlaybackStarted?() }
             } catch {
                 guard !Task.isCancelled, !isStopped else { return }
                 presentPlaybackError(error)
@@ -362,24 +362,57 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
     }
 }
 
-@MainActor final class WatchLauncher {
+@MainActor final class WatchLauncher: NSObject, NSWindowDelegate {
     let app: NSApplication
     let window: NSWindow
     var task: Task<Void, Never>?
     var active: AppDelegate?
-    init(app: NSApplication, window: NSWindow) { self.app = app; self.window = window }
+    private var generation = 0
+    private(set) var isCancelled = false
+    private var closingAfterSuccess = false
+    var fetchCatalog: () async throws -> WatchCatalogResult = {
+        let token = try OfficialSession.discover().authorizationToken()
+        return try await WatchCatalogClient.fetchResult(authorization: token)
+    }
+    var selectItem: ([WatchItem], Bool) -> WatchItem? = { chooseWatchItem($0, allowAutomatic: $1) }
+    var beginPlayback: (AppDelegate) -> Void = {
+        $0.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+    }
+    init(app: NSApplication, window: NSWindow) {
+        self.app = app; self.window = window
+        super.init()
+        window.delegate = self
+    }
+    func cancel() {
+        isCancelled = true
+        generation += 1
+        task?.cancel()
+        task = nil
+        active?.stopPlayback()
+        if let sheet = window.attachedSheet { window.endSheet(sheet, returnCode: .cancel) }
+    }
+    func windowWillClose(_ notification: Notification) {
+        guard !closingAfterSuccess else { return }
+        cancel()
+    }
+    private func isCurrent(_ current: Int) -> Bool { !isCancelled && current == generation }
     func load(previous: WatchItem? = nil, forceChooser: Bool = false) {
         task?.cancel()
+        generation += 1
+        let current = generation
+        isCancelled = false
         window.makeKeyAndOrderFront(nil)
         task = Task {
+            defer { if current == generation { task = nil } }
             do {
+                guard isCurrent(current), !Task.isCancelled else { return }
                 let item: WatchItem
                 if let previous, !forceChooser {
                     item = previous
                 } else {
-                    let token = try OfficialSession.discover().authorizationToken()
-                    let result = try await WatchCatalogClient.fetchResult(authorization: token)
+                    let result = try await fetchCatalog()
                     try Task.checkCancellation()
+                    guard isCurrent(current) else { return }
                     for warning in result.warnings { fputs("Catalog warning: \(warning)\n", stderr) }
                     if !result.warnings.isEmpty {
                         let alert = NSAlert()
@@ -387,35 +420,46 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
                         alert.informativeText = result.warnings.joined(separator: "\n")
                         alert.runModal()
                     }
+                    guard isCurrent(current), !Task.isCancelled else { return }
                     guard !result.items.isEmpty else {
                         throw NSError(domain: "NESNCatalog", code: 404, userInfo: [NSLocalizedDescriptionKey: "NESN returned no playable programs."])
                     }
-                    guard let selected = chooseWatchItem(result.items, allowAutomatic: !forceChooser) else {
+                    let selected = selectItem(result.items, !forceChooser)
+                    guard isCurrent(current), !Task.isCancelled else { return }
+                    guard let selected else {
                         app.terminate(nil); return
                     }
                     item = selected
                 }
                 try Task.checkCancellation()
+                guard isCurrent(current) else { return }
                 let config = Config(contentID: item.contentID, title: item.choice.title, url: "", certificateUrl: "", licenseUrl: "", licenseToken: "")
                 let delegate = AppDelegate(config: config, channelID: item.channelID, launchWindow: window,
                                            isLiveContent: item.choice.isLive, isUltraHD: playbackIsUltraHD(item.choice))
                 delegate.onRecovery = { [weak self] chooseAnother in
-                    self?.load(previous: item, forceChooser: chooseAnother)
+                    guard let self, self.isCurrent(current) else { return }
+                    self.load(previous: item, forceChooser: chooseAnother)
+                }
+                delegate.onPlaybackStarted = { [weak self] in
+                    guard let self, self.isCurrent(current) else { return }
+                    self.closingAfterSuccess = true
+                    defer { self.closingAfterSuccess = false }
+                    self.window.close()
                 }
                 let old = active
                 active = delegate
                 app.delegate = delegate
                 old?.window?.close()
-                delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+                beginPlayback(delegate)
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, isCurrent(current) else { return }
                 let alert = NSAlert()
                 alert.messageText = "NESN Player could not load the watch catalog"
                 alert.informativeText = safeErrorDescription(error) + "\n\nOpen NESN 360 and confirm you are signed in."
                 alert.addButton(withTitle: "Retry")
                 alert.addButton(withTitle: "Quit")
                 alert.beginSheetModal(for: window) { [weak self] response in
-                    guard let self else { return }
+                    guard let self, self.isCurrent(current) else { return }
                     if response == .alertFirstButtonReturn { self.load(previous: previous, forceChooser: forceChooser) }
                     else { self.app.terminate(nil) }
                 }
@@ -473,7 +517,7 @@ case .normal:
     window.contentView?.addSubview(label)
     let launcher = WatchLauncher(app: app, window: window)
     objc_setAssociatedObject(app, "NESNPlayerLauncher", launcher, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-    launchDelegate.onTerminate = { [weak launcher] in launcher?.task?.cancel() }
+    launchDelegate.onTerminate = { [weak launcher] in launcher?.cancel() }
     launcher.load()
     app.activate(ignoringOtherApps: true)
     app.run()
