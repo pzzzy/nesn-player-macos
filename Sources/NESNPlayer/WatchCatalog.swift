@@ -36,6 +36,11 @@ enum WatchCatalogClient {
         async let home = fetchPageResult(query: homeQuery, path: "/", authorization: authorization)
         async let linear = fetchPageResult(query: linearQuery, path: "/live", authorization: authorization)
         let (homeResult, linearResult) = await (home, linear)
+        return try mergeResults(home: homeResult, linear: linearResult)
+    }
+
+    /// Pure merge seam: fixtures inject source outcomes without contacting the provider.
+    static func mergeResults(home homeResult: Result<WatchCatalogResult, Error>, linear linearResult: Result<WatchCatalogResult, Error>) throws -> WatchCatalogResult {
         var items: [WatchItem] = []
         var warnings: [String] = []
         for result in [homeResult, linearResult] {
@@ -93,12 +98,12 @@ enum WatchCatalogClient {
                    let gameTitle = row["title"] as? String {
                     let candidates = streams.compactMap { stream -> WatchStream? in
                         guard let id = stream["id"] as? String else { return nil }
-                        return WatchStream(id: id, title: (stream["title"] as? String) ?? gameTitle)
+                        return WatchStream(id: id, title: (stream["title"] as? String) ?? "")
                     }
                     for stream in candidates {
                         // Keep the event identity and child qualifier: neither generic
                         // "4K" nor "Alternate" may erase the parent or feed semantics.
-                        let title = stream.title == gameTitle ? gameTitle : "\(gameTitle) — \(stream.title)"
+                        let title = stream.title.isEmpty || stream.title == gameTitle ? gameTitle : "\(gameTitle) — \(stream.title)"
                         let choice = WatchChoice(id: stream.id, title: title, kind: .liveEvent, isLive: true, streamTitle: stream.title, gameTitle: gameTitle)
                         items.append(WatchItem(choice: choice, contentID: stream.id, channelID: nil))
                     }

@@ -40,7 +40,8 @@ func isFullGameReplay(title: String) -> Bool {
     return lower.contains("replay") && !lower.contains("highlight")
 }
 
-func automaticChoice(from choices: [WatchChoice]) -> WatchChoice? {
+func automaticChoice(from choices: [WatchChoice], forceChooser: Bool = false) -> WatchChoice? {
+    guard !forceChooser else { return nil }
     let liveRedSox = choices.filter {
         $0.kind == .liveEvent && $0.isLive && isPrimaryRedSoxTitle($0.title)
     }

@@ -39,6 +39,9 @@ struct Entitlement: Decodable {
         }
         let value = try JSONDecoder().decode(Entitlement.self, from: data)
         guard value.success, value.playable else { throw NSError(domain: "NESNEntitlement", code: 403) }
+        guard value.fairPlay?.url.isEmpty == false || value.hlsURL?.isEmpty == false else {
+            throw NSError(domain: "NESNEntitlement", code: 422)
+        }
         return value
     }
 }
@@ -171,7 +174,11 @@ enum LinearEntitlementClient {
         }
         struct Response: Decodable { let linearchannel: Entitlement.Video }
         let response = try JSONDecoder().decode(Response.self, from: data)
-        return Entitlement(playable: true, success: true, video: response.linearchannel)
+        let value = Entitlement(playable: true, success: true, video: response.linearchannel)
+        guard value.fairPlay?.url.isEmpty == false || value.hlsURL?.isEmpty == false else {
+            throw NSError(domain: "NESNLinearEntitlement", code: 422)
+        }
+        return value
     }
 
     static func fetch(linearID: String, channelID: String, authorization: String) async throws -> Entitlement {
