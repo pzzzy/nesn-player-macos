@@ -42,7 +42,8 @@ def bundle_info(m):
         'CFBundleDisplayName': 'NESN Player',
         'CFBundlePackageType': 'APPL',
         'CFBundleIconFile': 'AppIcon',
-        'CFBundleShortVersionString': m['version'],
+        'CFBundleShortVersionString': m['version'].split('-', 1)[0],
+        'NESNPlayerReleaseVersion': m['version'],
         'CFBundleVersion': m['build'],
         'LSMinimumSystemVersion': m['minimum_macos'],
         'LSArchitecturePriority': [m['architecture']],
@@ -65,10 +66,12 @@ def verify_bundle(app, m, license_path):
     notice = app / 'Contents/Resources/LICENSE'
     if not notice.is_file() or notice.read_bytes() != Path(license_path).read_bytes():
         raise ValueError('missing or changed LICENSE')
+    binary = app / 'Contents/MacOS/NESNPlayer'
+    if not binary.is_file() or not binary.stat().st_mode & 0o111:
+        raise ValueError('binary is not executable')
     run('codesign', '--verify', '--deep', '--strict', str(app))
     if 'Signature=adhoc' not in run('codesign', '-d', '--verbose=2', str(app)):
         raise ValueError('expected ad-hoc signature')
-    binary = app / 'Contents/MacOS/NESNPlayer'
     if run('lipo', '-archs', str(binary)).strip() != m['architecture']:
         raise ValueError('binary architecture mismatch')
     commands = run('otool', '-l', str(binary))

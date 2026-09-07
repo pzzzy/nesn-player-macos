@@ -60,6 +60,51 @@ class ArtifactTests(unittest.TestCase):
     def test_valid_signed_archive(self):
         self.verify()
 
+    def test_candidate_version_uses_numeric_bundle_version(self):
+        metadata = dict(self.meta, version='1.6.0-dev')
+        info = self.checker.bundle_info(metadata)
+        self.assertEqual(info['CFBundleShortVersionString'], '1.6.0')
+        self.assertEqual(info['NESNPlayerReleaseVersion'], '1.6.0-dev')
+        self.assertEqual(self.checker.archive_name(metadata),
+                         'NESN-Player-v1.6.0-dev-macOS-arm64.zip')
+
+    def test_stable_version_preserves_release_identity(self):
+        info = self.checker.bundle_info(dict(self.meta, version='1.6.0'))
+        self.assertEqual(info['CFBundleShortVersionString'], '1.6.0')
+        self.assertEqual(info.get('NESNPlayerReleaseVersion'), '1.6.0')
+
+    def test_missing_candidate_release_identity(self):
+        p = self.app / 'Contents/Info.plist'
+        info = plistlib.loads(p.read_bytes())
+        info.pop('NESNPlayerReleaseVersion', None)
+        p.write_bytes(plistlib.dumps(info))
+        self.sign()
+        self.archive()
+        with self.assertRaisesRegex(ValueError, 'NESNPlayerReleaseVersion'):
+            self.verify()
+
+    def test_local_binary_requires_execute_bits(self):
+        (self.app / 'Contents/MacOS/NESNPlayer').chmod(0o644)
+        with self.assertRaisesRegex(ValueError, 'binary.*executable'):
+            self.verify()
+
+    def test_archived_binary_requires_execute_bits(self):
+        # Change only ZIP permissions, not signed bytes, and regenerate SHA-256.
+        for mode in (0o100644, 0):
+            with self.subTest(mode=oct(mode)):
+                self.archive()
+                with zipfile.ZipFile(self.zip) as z:
+                    entries = [(item, z.read(item)) for item in z.infolist()]
+                with zipfile.ZipFile(self.zip, 'w', zipfile.ZIP_DEFLATED) as z:
+                    for item, data in entries:
+                        if item.filename == 'NESN Player.app/Contents/MacOS/NESNPlayer':
+                            item.external_attr = mode << 16
+                        z.writestr(item, data)
+                self.hash.write_text(hashlib.sha256(self.zip.read_bytes()).hexdigest()
+                                     + '  ' + self.zip.name + '\n')
+                with self.assertRaisesRegex(ValueError, 'binary.*executable'):
+                    self.verify()
+
     def test_wrong_hash(self):
         self.hash.write_text('0' * 64 + '  ' + self.zip.name + '\n')
         with self.assertRaisesRegex(ValueError, 'checksum'):
