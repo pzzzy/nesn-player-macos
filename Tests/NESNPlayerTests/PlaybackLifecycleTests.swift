@@ -66,6 +66,32 @@ final class PlaybackLifecycleTests: XCTestCase {
         }
     }
 
+    @MainActor func testTransportSymbolsNeverDrawTitlesAfterStateChanges() {
+        let view = PlaybackView(frame: NSRect(x: 0, y: 0, width: 320, height: 180), player: FixturePlayer(), isLiveContent: true)
+        defer { view.dispose() }
+        let button = descendants(view).compactMap { $0 as? ActionButton }.first { $0.accessibilityLabel() == "Play" }!
+        for label in ["Play", "Pause", "Play", "Pause"] {
+            if label == "Pause" { view.play() }
+            else if button.accessibilityLabel() == "Pause" { button.performClick(nil) }
+            XCTAssertEqual(button.accessibilityLabel(), label)
+            XCTAssertEqual(button.toolTip, label)
+            XCTAssertEqual(button.title, "")
+            XCTAssertEqual(button.attributedTitle.string, "")
+            XCTAssertEqual(button.imagePosition, .imageOnly)
+            XCTAssertFalse(button.image == nil)
+        }
+    }
+
+    @MainActor func testCaptureFeedbackExpiresWithoutMaskingPlaybackStatus() async throws {
+        let view = PlaybackView(frame: NSRect(x: 0, y: 0, width: 320, height: 180), player: FixturePlayer(), isLiveContent: true)
+        defer { view.dispose() }
+        view.showCaptureStatus("Saved to Desktop")
+        XCTAssertTrue(descendants(view).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Saved to Desktop" })
+        try await Task.sleep(for: .seconds(6))
+        view.play()
+        XCTAssertFalse(descendants(view).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Saved to Desktop" })
+    }
+
     @MainActor func testLiveIndicatorUsesGreenAndDelayedUsesRed() {
         let player = FixturePlayer()
         let view = PlaybackView(frame: NSRect(x: 0, y: 0, width: 320, height: 180), player: player, isLiveContent: true)

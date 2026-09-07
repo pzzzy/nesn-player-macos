@@ -17,7 +17,7 @@ enum FrameCapture {
             case .protectedContent: "Screenshots are unavailable for protected content."
             case .unextractable: "This asset cannot provide a native screenshot. Live streams may not support frame extraction."
             case .preservationUnavailable: "A full-quality screenshot cannot be preserved by the available native image encoder."
-            case .destinationExists: "A file already exists. Confirm replacement in the save dialog first."
+            case .destinationExists: "A file already exists. The existing file was not replaced."
             case .timedOut: "No current frame became available before the screenshot timeout. Playback was not changed."
             case .saveFailed: "The screenshot could not be saved to the selected location."
             }
@@ -101,18 +101,18 @@ enum FrameCapture {
         }
         try Task.checkCancellation()
         guard player.currentItem === item else { throw Failure.unextractable }
-        let output = AVPlayerItemVideoOutput(outputSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
-            AVVideoAllowWideColorKey: true
-        ])
+        let output = makeVideoOutput()
         item.add(output)
-        defer { item.remove(output) }
+        defer { if item.outputs.contains(where: { $0 === output }) { item.remove(output) } }
         while ContinuousClock.now < deadline {
             try Task.checkCancellation()
             guard player.currentItem === item, item.status != .failed else { throw Failure.unextractable }
             let time = player.currentTime()
             if time.isNumeric, let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) {
-                let result = try encodeCurrentBuffer(buffer)
+                // Detach immediately: encoding/verification must not extend output ownership.
+                item.remove(output)
+                let frame = RetainedFrame(buffer: buffer)
+                let result = try await runOffMain { try encodeCurrentBuffer(frame.buffer) }
                 try Task.checkCancellation()
                 guard player.currentItem === item else { throw Failure.unextractable }
                 return result
@@ -120,6 +120,55 @@ enum FrameCapture {
             try await Task.sleep(for: .milliseconds(20))
         }
         throw Failure.timedOut
+    }
+
+    static func makeVideoOutput() -> AVPlayerItemVideoOutput {
+        let output = AVPlayerItemVideoOutput(outputSettings: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+            AVVideoAllowWideColorKey: true
+        ])
+        // Explicitly preserve normal rendering (also the current SDK default).
+        // This is an auxiliary still consumer, never the playback renderer.
+        output.suppressesPlayerRendering = false
+        return output
+    }
+
+    /// The copied buffer is retained, read-only and used by exactly one worker.
+    private struct RetainedFrame: @unchecked Sendable { let buffer: CVPixelBuffer }
+
+    static func runOffMain<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            return try autoreleasepool(invoking: operation)
+        }
+        return try await withTaskCancellationHandler {
+            let value = try await worker.value
+            try Task.checkCancellation()
+            return value
+        } onCancel: { worker.cancel() }
+    }
+
+    /// Automatic, exclusive Desktop export; injectable folder/date keep tests isolated.
+    /// A name collision retries exclusive creation, never an existence-check/overwrite.
+    static func saveUniqueTIFF(_ screenshot: Screenshot, in directory: URL? = nil, date: Date = Date()) async throws -> URL {
+        try await runOffMain {
+            guard screenshot.fileExtension == "tiff" else { throw Failure.preservationUnavailable }
+            guard let folder = directory ?? FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first,
+                  folder.isFileURL else { throw Failure.saveFailed }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy-MM-dd HH.mm.ss.SSS"
+            let stem = "NESN-frame-" + formatter.string(from: date)
+            for suffix in 0..<1000 {
+                try Task.checkCancellation()
+                let name = stem + (suffix == 0 ? "" : "-\(suffix)") + ".tiff"
+                let url = folder.appendingPathComponent(name)
+                do { try save(screenshot, to: url); return url }
+                catch Failure.destinationExists { continue }
+            }
+            throw Failure.saveFailed
+        }
     }
 
     /// Render into the original non-linear transfer, NOT an SDR or half-float

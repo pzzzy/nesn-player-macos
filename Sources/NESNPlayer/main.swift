@@ -193,26 +193,21 @@ struct Config: Decodable { let contentID, title, url, certificateUrl, licenseUrl
 
     func captureFrame() {
         guard !isStopped, captureTask == nil, let player, let source = player.currentItem else { return }
+        (window?.contentView as? PlaybackView)?.showCaptureStatus("Capturing…")
         captureTask = Task {
             defer { captureTask = nil }
             do {
                 let image = try await FrameCapture.capture(player: player, authorized: true)
                 try Task.checkCancellation()
                 guard !isStopped, player.currentItem === source else { return }
-                let panel = NSSavePanel()
-                panel.allowedContentTypes = [image.contentType]
-                panel.nameFieldStringValue = "NESN-frame.\(image.fileExtension)"
-                panel.message = "\(image.width) × \(image.height) · \(image.dynamicRangeNote)"
-                let response = await panel.beginSheetModal(for: window)
-                try Task.checkCancellation()
-                guard !isStopped, player.currentItem === source, response == .OK, let url = panel.url else { return }
-                try FrameCapture.save(image, to: url, overwriteConfirmed: true)
+                let url = try await FrameCapture.saveUniqueTIFF(image)
+                guard !isStopped, player.currentItem === source else { return }
+                (window?.contentView as? PlaybackView)?.showCaptureStatus("Saved to Desktop",
+                    detail: "\(url.lastPathComponent) · \(image.width) × \(image.height) · \(image.dynamicRangeNote)")
             } catch {
                 guard !Task.isCancelled, !isStopped else { return }
-                let alert = NSAlert()
-                alert.messageText = "Screenshot unavailable"
-                alert.informativeText = (error as? FrameCapture.Failure)?.errorDescription ?? "The screenshot could not be saved."
-                alert.beginSheetModal(for: window, completionHandler: nil)
+                (window?.contentView as? PlaybackView)?.showCaptureStatus("Capture unavailable",
+                    detail: (error as? FrameCapture.Failure)?.errorDescription ?? "The screenshot could not be saved.")
             }
         }
     }

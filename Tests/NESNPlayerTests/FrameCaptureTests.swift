@@ -31,10 +31,12 @@ private func XCTAssertThrowsError<T>(_ expression: @autoclosure () throws -> T, 
         await tests.testUnextractableClearAssetHasSanitizedFailure()
         try tests.testFloatHDRHeadroomIsPreservedOrRejected()
         await tests.testCurrentPlayerAuthorizationAndTimeout()
+        tests.testCaptureOutputDoesNotSuppressPlayerRendering()
+        try await tests.testWorkerIsOffMainAndUniqueTIFFSaveNeverOverwrites()
         try await tests.testCurrentClearHLSHDRExport()
         print(ProcessInfo.processInfo.environment["FRAME_CAPTURE_HLS_URL"] == nil
-              ? "FrameCapture: 8 tests passed; HLS integration skipped (set FRAME_CAPTURE_HLS_URL)"
-              : "FrameCapture: 9 tests passed including serialized HDR HLS integration")
+              ? "FrameCapture: 10 tests passed; HLS integration skipped (set FRAME_CAPTURE_HLS_URL)"
+              : "FrameCapture: 11 tests passed including serialized HDR HLS integration")
         if CommandLine.arguments.count == 2 {
             let url = URL(fileURLWithPath: CommandLine.arguments[1])
             do {
@@ -52,6 +54,34 @@ private func XCTAssertThrowsError<T>(_ expression: @autoclosure () throws -> T, 
 #endif
 
 final class FrameCaptureTests: XCTestCase {
+    @MainActor
+    func testCaptureOutputDoesNotSuppressPlayerRendering() {
+        XCTAssertFalse(FrameCapture.makeVideoOutput().suppressesPlayerRendering)
+    }
+
+    @MainActor
+    func testWorkerIsOffMainAndUniqueTIFFSaveNeverOverwrites() async throws {
+        let onMain = try await FrameCapture.runOffMain { Thread.isMainThread }
+        XCTAssertFalse(onMain)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let result = try FrameCapture.encode(image(bits: 16))
+        let date = Date(timeIntervalSince1970: 0)
+        let first = try await FrameCapture.saveUniqueTIFF(result, in: folder, date: date)
+        let second = try await FrameCapture.saveUniqueTIFF(result, in: folder, date: date)
+        XCTAssertFalse(first == second)
+        XCTAssertEqual(first.pathExtension, "tiff")
+        XCTAssertEqual(first.deletingLastPathComponent().path, folder.path)
+        XCTAssertEqual(try Data(contentsOf: first), result.data)
+        XCTAssertEqual(try Data(contentsOf: second), result.data)
+        let png = try FrameCapture.encode(image(bits: 8))
+        do { _ = try await FrameCapture.saveUniqueTIFF(png, in: folder); XCTFail("Do not mislabel PNG as TIFF") }
+        catch { XCTAssertEqual(error as? FrameCapture.Failure, .preservationUnavailable) }
+        do { _ = try await FrameCapture.saveUniqueTIFF(result, in: folder.appendingPathComponent("missing")); XCTFail("Missing folder must fail") }
+        catch { XCTAssertEqual(error as? FrameCapture.Failure, .saveFailed) }
+    }
+
     @MainActor
     func testCurrentPlayerAuthorizationAndTimeout() async {
         let player = AVPlayer(playerItem: AVPlayerItem(asset: AVMutableComposition()))

@@ -9,13 +9,19 @@ import AVKit
         super.init(frame: .zero)
         bezelStyle = .texturedRounded; isBordered = false; contentTintColor = .white
         font = .systemFont(ofSize: 14, weight: .semibold)
-        self.title = title
         if let symbolName {
-            image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
-            imagePosition = .imageOnly
-        }
+            setSymbol(symbolName, accessibleTitle: title)
+        } else { self.title = title }
         target = self; action = #selector(invoke)
         toolTip = title; setAccessibilityLabel(title)
+    }
+    /// Keep the drawable cell title empty, including after transport state changes.
+    /// Accessibility and tooltips carry the action name independently of drawing.
+    func setSymbol(_ name: String, accessibleTitle: String) {
+        title = ""; alternateTitle = ""
+        image = NSImage(systemSymbolName: name, accessibilityDescription: accessibleTitle)
+        imagePosition = .imageOnly
+        toolTip = accessibleTitle; setAccessibilityLabel(accessibleTitle)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     @objc private func invoke() { actionHandler?() }
@@ -44,6 +50,15 @@ import AVKit
     private let scrubber = PlaybackScrubber(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
     private let timeLabel = NSTextField(labelWithString: "0:00 / 0:00")
     private let statusLabel = NSTextField(labelWithString: "Loading")
+    private var captureStatus: String?
+    private var captureStatusExpiry: ContinuousClock.Instant?
+    func showCaptureStatus(_ text: String, detail: String? = nil) {
+        guard !isDisposed else { return }
+        captureStatus = text
+        captureStatusExpiry = .now.advanced(by: .seconds(5))
+        statusLabel.toolTip = detail ?? text
+        updateState(); showControls()
+    }
     private var timeObserver: Any?
     private var trackingAreaRef: NSTrackingArea?
     private var hideWorkItem: DispatchWorkItem?
@@ -245,13 +260,16 @@ import AVKit
     private func updateState() {
         guard !isDisposed else { return }
         let label = intent.actionLabel
-        if playButton.title != label {
-            playButton.title = label; playButton.toolTip = label; playButton.setAccessibilityLabel(label)
-            playButton.image = NSImage(systemSymbolName: intent.wantsPlayback ? "pause.fill" : "play.fill", accessibilityDescription: label)
+        if playButton.accessibilityLabel() != label {
+            playButton.setSymbol(intent.wantsPlayback ? "pause.fill" : "play.fill", accessibleTitle: label)
         }
         let phase = intent.phase(status: player.timeControlStatus)
         playButton.isEnabled = phase != .failed
-        statusLabel.stringValue = phase.rawValue
+        if let expiry = captureStatusExpiry, ContinuousClock.now >= expiry {
+            captureStatus = nil; captureStatusExpiry = nil; statusLabel.toolTip = nil
+        }
+        // A capture result must never hide a playback failure.
+        statusLabel.stringValue = phase == .failed ? phase.rawValue : (captureStatus ?? phase.rawValue)
         if isLiveContent {
             var label = "WAITING"
             if let range = player.currentItem?.seekableTimeRanges.last?.timeRangeValue {
